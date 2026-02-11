@@ -25,7 +25,11 @@ impl SoulManager {
         } else {
             // Create a default SOUL.md if it doesn't exist
             self.create_default_soul()?;
-            self.load()
+            // Read the newly created file
+            let content = std::fs::read_to_string(&self.soul_path)
+                .context("Failed to read default SOUL.md")?;
+            self.content = Some(content);
+            Ok(())
         }
     }
 

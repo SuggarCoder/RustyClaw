@@ -42,7 +42,7 @@ impl SkillManager {
             if path.is_file() {
                 if let Some(extension) = path.extension() {
                     // Support various skill formats (OpenClaw compatible)
-                    if extension == "skill" || extension == "json" || extension == "yaml" {
+                    if extension == "skill" || extension == "json" || extension == "yaml" || extension == "yml" {
                         if let Ok(skill) = self.load_skill(&path) {
                             self.skills.push(skill);
                         }
@@ -56,10 +56,18 @@ impl SkillManager {
 
     /// Load a single skill from a file
     fn load_skill(&self, path: &Path) -> Result<Skill> {
+        // Check extension before reading file for efficiency
+        let is_json = path.extension().is_some_and(|e| e == "json");
+        let is_yaml = path.extension().is_some_and(|e| e == "yaml" || e == "yml");
+        
+        if !is_json && !is_yaml {
+            anyhow::bail!("Unsupported skill file format: {:?}", path);
+        }
+        
         let content = std::fs::read_to_string(path)?;
         
-        // Try to parse as JSON first, then YAML
-        let skill: Skill = if path.extension().is_some_and(|e| e == "json") {
+        // Parse based on extension
+        let skill: Skill = if is_json {
             serde_json::from_str(&content)?
         } else {
             serde_yaml::from_str(&content)?
