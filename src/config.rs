@@ -42,6 +42,9 @@ pub struct Config {
     /// Whether TOTP two-factor authentication is enabled for the vault.
     #[serde(default)]
     pub totp_enabled: bool,
+    /// Whether the agent is allowed to access secrets on behalf of the user.
+    #[serde(default)]
+    pub agent_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +69,7 @@ impl Default for Config {
             model: None,
             secrets_password_protected: false,
             totp_enabled: false,
+            agent_access: false,
         }
     }
 }

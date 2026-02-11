@@ -121,6 +121,7 @@ impl Pane for SecretsPane {
                         return Ok(Some(Action::ShowCredentialDialog {
                             name: name.clone(),
                             disabled: entry.disabled,
+                            policy: entry.policy.badge().to_string(),
                         }));
                     }
                 }

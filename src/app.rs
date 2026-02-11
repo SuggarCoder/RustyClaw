@@ -73,6 +73,9 @@ struct ProviderSelectorState {
 /// Which option is highlighted in the credential-management dialog.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum CredDialogOption {
+    ViewSecret,
+    CopySecret,
+    ChangePolicy,
     ToggleDisable,
     Delete,
     SetupTotp,
@@ -87,8 +90,38 @@ struct CredentialDialogState {
     disabled: bool,
     /// Whether 2FA is currently configured for the vault
     has_totp: bool,
+    /// Current access policy of the credential
+    current_policy: crate::secrets::AccessPolicy,
     /// Currently highlighted menu option
     selected: CredDialogOption,
+}
+
+/// Which policy option is highlighted in the policy-picker dialog.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PolicyPickerOption {
+    Open,
+    Ask,
+    Auth,
+    Skill,
+}
+
+/// Phase of the SKILL-policy sub-flow inside the policy picker.
+#[derive(Debug, Clone, PartialEq)]
+enum PolicyPickerPhase {
+    /// Selecting among OPEN / ASK / AUTH / SKILL
+    Selecting,
+    /// Editing the skill name list (comma-separated)
+    EditingSkills { input: String },
+}
+
+/// State for the access-policy picker dialog overlay.
+struct PolicyPickerState {
+    /// Vault key name of the credential
+    cred_name: String,
+    /// Currently highlighted policy option
+    selected: PolicyPickerOption,
+    /// Current dialog phase
+    phase: PolicyPickerPhase,
 }
 
 /// Phase of the TOTP setup dialog.
@@ -107,6 +140,23 @@ enum TotpDialogPhase {
 /// State for the 2FA (TOTP) setup dialog overlay.
 struct TotpDialogState {
     phase: TotpDialogPhase,
+}
+
+/// State for the secret-viewer dialog overlay.
+struct SecretViewerState {
+    /// Vault key name of the credential
+    name: String,
+    /// Decrypted (label, value) pairs
+    fields: Vec<(String, String)>,
+    /// Whether the values are currently revealed (unmasked)
+    revealed: bool,
+    /// Which field is highlighted (for copying)
+    selected: usize,
+    /// Scroll offset when the list is longer than the dialog
+    #[allow(dead_code)]
+    scroll_offset: usize,
+    /// Transient status message (e.g. "Copied!")
+    status: Option<String>,
 }
 
 /// Shared state that is separate from the UI components so we can borrow both
@@ -173,6 +223,10 @@ pub struct App {
     credential_dialog: Option<CredentialDialogState>,
     /// 2FA (TOTP) setup dialog state
     totp_dialog: Option<TotpDialogState>,
+    /// Secret viewer dialog state
+    secret_viewer: Option<SecretViewerState>,
+    /// Policy-picker dialog state
+    policy_picker: Option<PolicyPickerState>,
 }
 
 /// State for the API-key input dialog overlay.
@@ -208,6 +262,8 @@ impl App {
         // Initialise managers
         if !config.use_secrets {
             secrets_manager.set_agent_access(false);
+        } else {
+            secrets_manager.set_agent_access(config.agent_access);
         }
 
         let skills_dir = config.skills_dir();
@@ -258,6 +314,8 @@ impl App {
             provider_selector: None,
             credential_dialog: None,
             totp_dialog: None,
+            secret_viewer: None,
+            policy_picker: None,
         })
     }
 
@@ -331,6 +389,24 @@ impl App {
                         else if self.model_selector.is_some() {
                             if let Event::Key(key) = &event {
                                 let action = self.handle_model_selector_key(key.code);
+                                Some(action)
+                            } else {
+                                None
+                            }
+                        }
+                        // If the policy picker is open, intercept keys for it
+                        else if self.policy_picker.is_some() {
+                            if let Event::Key(key) = &event {
+                                let action = self.handle_policy_picker_key(key.code);
+                                Some(action)
+                            } else {
+                                None
+                            }
+                        }
+                        // If the secret viewer is open, intercept keys for it
+                        else if self.secret_viewer.is_some() {
+                            if let Event::Key(key) = &event {
+                                let action = self.handle_secret_viewer_key(key.code);
                                 Some(action)
                             } else {
                                 None
@@ -633,12 +709,20 @@ impl App {
                 self.state.messages.push(msg.clone());
                 return Ok(Some(Action::Update));
             }
-            Action::ShowCredentialDialog { ref name, ref disabled } => {
+            Action::ShowCredentialDialog { ref name, ref disabled, .. } => {
                 let has_totp = self.state.secrets_manager.has_totp();
+                // Look up the actual current policy from the vault metadata
+                let current_policy = self.state.secrets_manager
+                    .list_all_entries()
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map(|(_, entry)| entry.policy.clone())
+                    .unwrap_or_default();
                 self.credential_dialog = Some(CredentialDialogState {
                     name: name.clone(),
                     disabled: *disabled,
                     has_totp,
+                    current_policy,
                     selected: CredDialogOption::ToggleDisable,
                 });
                 return Ok(None);
@@ -707,6 +791,7 @@ impl App {
             let mut context = CommandContext {
                 secrets_manager: &mut self.state.secrets_manager,
                 skill_manager: &mut self.state.skill_manager,
+                config: &mut self.state.config,
             };
 
             let response = handle_command(&text, &mut context);
@@ -1039,9 +1124,19 @@ impl App {
                 Self::draw_credential_dialog(frame, area, dialog);
             }
 
+            // Policy picker dialog overlay
+            if let Some(ref picker) = self.policy_picker {
+                Self::draw_policy_picker(frame, area, picker);
+            }
+
             // TOTP setup dialog overlay
             if let Some(ref dialog) = self.totp_dialog {
                 Self::draw_totp_dialog(frame, area, dialog);
+            }
+
+            // Secret viewer dialog overlay
+            if let Some(ref viewer) = self.secret_viewer {
+                Self::draw_secret_viewer(frame, area, viewer);
             }
         })?;
         Ok(())
@@ -1882,6 +1977,9 @@ impl App {
         };
 
         let options = [
+            CredDialogOption::ViewSecret,
+            CredDialogOption::CopySecret,
+            CredDialogOption::ChangePolicy,
             CredDialogOption::ToggleDisable,
             CredDialogOption::Delete,
             CredDialogOption::SetupTotp,
@@ -1909,6 +2007,75 @@ impl App {
             }
             KeyCode::Enter => {
                 match dlg.selected {
+                    CredDialogOption::ViewSecret => {
+                        match self.state.secrets_manager.peek_credential_display(&dlg.name) {
+                            Ok(fields) => {
+                                self.secret_viewer = Some(SecretViewerState {
+                                    name: dlg.name.clone(),
+                                    fields,
+                                    revealed: false,
+                                    selected: 0,
+                                    scroll_offset: 0,
+                                    status: None,
+                                });
+                            }
+                            Err(e) => {
+                                self.state.messages.push(format!(
+                                    "Failed to read secret: {}", e,
+                                ));
+                            }
+                        }
+                        return Action::Noop;
+                    }
+                    CredDialogOption::CopySecret => {
+                        match self.state.secrets_manager.peek_credential_display(&dlg.name) {
+                            Ok(fields) => {
+                                // Copy the first (or only) value to clipboard.
+                                let text = if fields.len() == 1 {
+                                    fields[0].1.clone()
+                                } else {
+                                    // Multi-field: join as "Label: Value" lines.
+                                    fields.iter()
+                                        .map(|(k, v)| format!("{}: {}", k, v))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                };
+                                match Self::copy_to_clipboard(&text) {
+                                    Ok(()) => {
+                                        self.state.messages.push(format!(
+                                            "Credential '{}' copied to clipboard.", dlg.name,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        self.state.messages.push(format!(
+                                            "Failed to copy: {}", e,
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.state.messages.push(format!(
+                                    "Failed to read secret: {}", e,
+                                ));
+                            }
+                        }
+                        return Action::Update;
+                    }
+                    CredDialogOption::ChangePolicy => {
+                        // Determine the currently selected policy picker option
+                        let selected = match &dlg.current_policy {
+                            crate::secrets::AccessPolicy::Always => PolicyPickerOption::Open,
+                            crate::secrets::AccessPolicy::WithApproval => PolicyPickerOption::Ask,
+                            crate::secrets::AccessPolicy::WithAuth => PolicyPickerOption::Auth,
+                            crate::secrets::AccessPolicy::SkillOnly(_) => PolicyPickerOption::Skill,
+                        };
+                        self.policy_picker = Some(PolicyPickerState {
+                            cred_name: dlg.name.clone(),
+                            selected,
+                            phase: PolicyPickerPhase::Selecting,
+                        });
+                        return Action::Noop;
+                    }
                     CredDialogOption::ToggleDisable => {
                         let new_state = !dlg.disabled;
                         match self.state.secrets_manager.set_credential_disabled(&dlg.name, new_state) {
@@ -1978,7 +2145,7 @@ impl App {
         };
 
         let dialog_w = 50.min(area.width.saturating_sub(4));
-        let dialog_h = 10u16.min(area.height.saturating_sub(4)).max(6);
+        let dialog_h = 14u16.min(area.height.saturating_sub(4)).max(9);
         let x = area.x + (area.width.saturating_sub(dialog_w)) / 2;
         let y = area.y + (area.height.saturating_sub(dialog_h)) / 2;
         let dialog_area = Rect::new(x, y, dialog_w, dialog_h);
@@ -2016,11 +2183,16 @@ impl App {
             "🔒 Set up 2FA (TOTP)"
         };
 
-        let menu_items: Vec<(&str, CredDialogOption)> = vec![
-            (toggle_label, CredDialogOption::ToggleDisable),
-            ("  Delete credential", CredDialogOption::Delete),
-            (totp_label, CredDialogOption::SetupTotp),
-            ("  Cancel", CredDialogOption::Cancel),
+        let policy_label = format!("🛡 Change policy [{}]", dlg.current_policy.badge());
+
+        let menu_items: Vec<(String, CredDialogOption)> = vec![
+            ("👁 View secret".to_string(), CredDialogOption::ViewSecret),
+            ("📋 Copy to clipboard".to_string(), CredDialogOption::CopySecret),
+            (policy_label, CredDialogOption::ChangePolicy),
+            (toggle_label.to_string(), CredDialogOption::ToggleDisable),
+            ("  Delete credential".to_string(), CredDialogOption::Delete),
+            (totp_label.to_string(), CredDialogOption::SetupTotp),
+            ("  Cancel".to_string(), CredDialogOption::Cancel),
         ];
 
         let items: Vec<ListItem> = menu_items
@@ -2047,13 +2219,314 @@ impl App {
 
                 ListItem::new(Line::from(vec![
                     Span::styled(marker, Style::default().fg(tp::ACCENT)),
-                    Span::styled(*label, final_style),
+                    Span::styled(label.as_str(), final_style),
                 ]))
             })
             .collect();
 
         let list = List::new(items).style(Style::default().fg(tp::TEXT));
         frame.render_widget(list, inner);
+    }
+
+    // ── Policy picker dialog ───────────────────────────────────
+
+    /// Handle key events when the policy-picker dialog is open.
+    fn handle_policy_picker_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+    ) -> Action {
+        use crossterm::event::KeyCode;
+
+        let Some(mut picker) = self.policy_picker.take() else {
+            return Action::Noop;
+        };
+
+        match picker.phase {
+            PolicyPickerPhase::Selecting => {
+                let options = [
+                    PolicyPickerOption::Open,
+                    PolicyPickerOption::Ask,
+                    PolicyPickerOption::Auth,
+                    PolicyPickerOption::Skill,
+                ];
+
+                match code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        // Cancel — go back to credential dialog
+                        return Action::Noop;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        let cur = options.iter().position(|o| *o == picker.selected).unwrap_or(0);
+                        let next = if cur == 0 { options.len() - 1 } else { cur - 1 };
+                        picker.selected = options[next];
+                        self.policy_picker = Some(picker);
+                        return Action::Noop;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let cur = options.iter().position(|o| *o == picker.selected).unwrap_or(0);
+                        let next = (cur + 1) % options.len();
+                        picker.selected = options[next];
+                        self.policy_picker = Some(picker);
+                        return Action::Noop;
+                    }
+                    KeyCode::Enter => {
+                        match picker.selected {
+                            PolicyPickerOption::Open => {
+                                match self.state.secrets_manager.set_credential_policy(
+                                    &picker.cred_name,
+                                    crate::secrets::AccessPolicy::Always,
+                                ) {
+                                    Ok(()) => {
+                                        self.state.messages.push(format!(
+                                            "Policy for '{}' set to OPEN.", picker.cred_name,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        self.state.messages.push(format!(
+                                            "Failed to set policy: {}", e,
+                                        ));
+                                    }
+                                }
+                                return Action::Update;
+                            }
+                            PolicyPickerOption::Ask => {
+                                match self.state.secrets_manager.set_credential_policy(
+                                    &picker.cred_name,
+                                    crate::secrets::AccessPolicy::WithApproval,
+                                ) {
+                                    Ok(()) => {
+                                        self.state.messages.push(format!(
+                                            "Policy for '{}' set to ASK.", picker.cred_name,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        self.state.messages.push(format!(
+                                            "Failed to set policy: {}", e,
+                                        ));
+                                    }
+                                }
+                                return Action::Update;
+                            }
+                            PolicyPickerOption::Auth => {
+                                match self.state.secrets_manager.set_credential_policy(
+                                    &picker.cred_name,
+                                    crate::secrets::AccessPolicy::WithAuth,
+                                ) {
+                                    Ok(()) => {
+                                        self.state.messages.push(format!(
+                                            "Policy for '{}' set to AUTH.", picker.cred_name,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        self.state.messages.push(format!(
+                                            "Failed to set policy: {}", e,
+                                        ));
+                                    }
+                                }
+                                return Action::Update;
+                            }
+                            PolicyPickerOption::Skill => {
+                                // Transition to skill name input phase
+                                picker.phase = PolicyPickerPhase::EditingSkills {
+                                    input: String::new(),
+                                };
+                                self.policy_picker = Some(picker);
+                                return Action::Noop;
+                            }
+                        }
+                    }
+                    _ => {
+                        self.policy_picker = Some(picker);
+                        return Action::Noop;
+                    }
+                }
+            }
+            PolicyPickerPhase::EditingSkills { ref mut input } => {
+                match code {
+                    KeyCode::Esc => {
+                        // Go back to the selection phase
+                        picker.phase = PolicyPickerPhase::Selecting;
+                        self.policy_picker = Some(picker);
+                        return Action::Noop;
+                    }
+                    KeyCode::Char(c) => {
+                        input.push(c);
+                        self.policy_picker = Some(picker);
+                        return Action::Noop;
+                    }
+                    KeyCode::Backspace => {
+                        input.pop();
+                        self.policy_picker = Some(picker);
+                        return Action::Noop;
+                    }
+                    KeyCode::Enter => {
+                        let skills: Vec<String> = input
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+
+                        match self.state.secrets_manager.set_credential_policy(
+                            &picker.cred_name,
+                            crate::secrets::AccessPolicy::SkillOnly(skills.clone()),
+                        ) {
+                            Ok(()) => {
+                                if skills.is_empty() {
+                                    self.state.messages.push(format!(
+                                        "Policy for '{}' set to SKILL (locked — no skills).",
+                                        picker.cred_name,
+                                    ));
+                                } else {
+                                    self.state.messages.push(format!(
+                                        "Policy for '{}' set to SKILL ({}).",
+                                        picker.cred_name,
+                                        skills.join(", "),
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                self.state.messages.push(format!(
+                                    "Failed to set policy: {}", e,
+                                ));
+                            }
+                        }
+                        return Action::Update;
+                    }
+                    _ => {
+                        self.policy_picker = Some(picker);
+                        return Action::Noop;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Draw a centered policy-picker dialog overlay.
+    fn draw_policy_picker(
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        picker: &PolicyPickerState,
+    ) {
+        use crate::theme::tui_palette as tp;
+        use ratatui::widgets::{
+            Block, Borders, Clear, List, ListItem, Paragraph,
+        };
+
+        let dialog_w = 52.min(area.width.saturating_sub(4));
+        let dialog_h = match picker.phase {
+            PolicyPickerPhase::Selecting => 12u16,
+            PolicyPickerPhase::EditingSkills { .. } => 8u16,
+        }
+        .min(area.height.saturating_sub(4))
+        .max(8);
+        let x = area.x + (area.width.saturating_sub(dialog_w)) / 2;
+        let y = area.y + (area.height.saturating_sub(dialog_h)) / 2;
+        let dialog_area = Rect::new(x, y, dialog_w, dialog_h);
+
+        frame.render_widget(Clear, dialog_area);
+
+        match picker.phase {
+            PolicyPickerPhase::Selecting => {
+                let title = format!(" {} — Access Policy ", picker.cred_name);
+                let hint = " ↑↓ navigate · Enter select · Esc cancel ";
+
+                let block = Block::default()
+                    .title(Span::styled(&title, tp::title_focused()))
+                    .title_bottom(
+                        Line::from(Span::styled(hint, Style::default().fg(tp::MUTED)))
+                            .right_aligned(),
+                    )
+                    .borders(Borders::ALL)
+                    .border_style(tp::focused_border())
+                    .border_type(ratatui::widgets::BorderType::Rounded);
+
+                let inner = block.inner(dialog_area);
+                frame.render_widget(block, dialog_area);
+
+                let options: Vec<(PolicyPickerOption, &str, &str, Color)> = vec![
+                    (PolicyPickerOption::Open, "OPEN", "  Agent can read anytime", tp::SUCCESS),
+                    (PolicyPickerOption::Ask, "ASK", "   Agent asks per use", tp::WARN),
+                    (PolicyPickerOption::Auth, "AUTH", "  Re-authenticate each time", tp::ERROR),
+                    (PolicyPickerOption::Skill, "SKILL", " Only named skills may read", tp::INFO),
+                ];
+
+                let items: Vec<ListItem> = options
+                    .iter()
+                    .map(|(opt, badge_text, desc, badge_color)| {
+                        let is_selected = *opt == picker.selected;
+                        let marker = if is_selected { "❯ " } else { "  " };
+
+                        let badge = Span::styled(
+                            format!(" {} ", badge_text),
+                            Style::default()
+                                .fg(Color::Rgb(0x1E, 0x1C, 0x1A))
+                                .bg(*badge_color),
+                        );
+
+                        let desc_style = if is_selected {
+                            Style::default()
+                                .fg(tp::ACCENT_BRIGHT)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(tp::TEXT_DIM)
+                        };
+
+                        ListItem::new(Line::from(vec![
+                            Span::styled(marker, Style::default().fg(tp::ACCENT)),
+                            badge,
+                            Span::styled(*desc, desc_style),
+                        ]))
+                    })
+                    .collect();
+
+                // Render with a blank row at top for padding
+                let mut all_items = vec![ListItem::new("")];
+                all_items.extend(items);
+
+                let list = List::new(all_items);
+                frame.render_widget(list, inner);
+            }
+            PolicyPickerPhase::EditingSkills { ref input } => {
+                let title = format!(" {} — SKILL Policy ", picker.cred_name);
+                let hint = " Enter confirm · Esc back ";
+
+                let block = Block::default()
+                    .title(Span::styled(&title, tp::title_focused()))
+                    .title_bottom(
+                        Line::from(Span::styled(hint, Style::default().fg(tp::MUTED)))
+                            .right_aligned(),
+                    )
+                    .borders(Borders::ALL)
+                    .border_style(tp::focused_border())
+                    .border_type(ratatui::widgets::BorderType::Rounded);
+
+                let inner = block.inner(dialog_area);
+                frame.render_widget(block, dialog_area);
+
+                let prompt_text = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Enter skill names (comma-separated):",
+                        Style::default().fg(tp::TEXT_DIM),
+                    )),
+                    Line::from(Span::styled(
+                        " Leave empty to lock the credential.",
+                        Style::default().fg(tp::MUTED),
+                    )),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(" > ", Style::default().fg(tp::ACCENT)),
+                        Span::styled(
+                            format!("{}_", input),
+                            Style::default().fg(tp::TEXT).add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                ];
+
+                let paragraph = Paragraph::new(prompt_text);
+                frame.render_widget(paragraph, inner);
+            }
+        }
     }
 
     // ── TOTP setup dialog ─────────────────────────────────────
@@ -2092,6 +2565,8 @@ impl App {
                         if input.len() == 6 {
                             match self.state.secrets_manager.verify_totp(input) {
                                 Ok(true) => {
+                                    self.state.config.totp_enabled = true;
+                                    let _ = self.state.config.save(None);
                                     self.state.messages.push(
                                         "✓ 2FA configured successfully.".to_string(),
                                     );
@@ -2138,6 +2613,8 @@ impl App {
                         // Remove 2FA
                         match self.state.secrets_manager.remove_totp() {
                             Ok(()) => {
+                                self.state.config.totp_enabled = false;
+                                let _ = self.state.config.save(None);
                                 self.state.messages.push(
                                     "2FA has been removed.".to_string(),
                                 );
@@ -2285,5 +2762,239 @@ impl App {
         let text = ratatui::text::Text::from(lines);
         let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner);
+    }
+
+    // ── Clipboard helper ──────────────────────────────────────
+
+    /// Copy text to the system clipboard using platform-native tools.
+    fn copy_to_clipboard(text: &str) -> Result<()> {
+        use anyhow::Context;
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        #[cfg(target_os = "macos")]
+        let mut child = Command::new("pbcopy")
+            .stdin(Stdio::piped())
+            .spawn()
+            .context("Failed to launch pbcopy")?;
+
+        #[cfg(target_os = "linux")]
+        let mut child = {
+            // Try xclip first, fall back to xsel
+            Command::new("xclip")
+                .args(["-selection", "clipboard"])
+                .stdin(Stdio::piped())
+                .spawn()
+                .or_else(|_| {
+                    Command::new("xsel")
+                        .arg("--clipboard")
+                        .stdin(Stdio::piped())
+                        .spawn()
+                })
+                .context("Failed to launch xclip or xsel")?
+        };
+
+        #[cfg(target_os = "windows")]
+        let mut child = Command::new("clip")
+            .stdin(Stdio::piped())
+            .spawn()
+            .context("Failed to launch clip.exe")?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(text.as_bytes())
+                .context("Failed to write to clipboard process")?;
+        }
+        child.wait().context("Clipboard process failed")?;
+        Ok(())
+    }
+
+    // ── Secret viewer dialog ──────────────────────────────────
+
+    /// Handle key events when the secret viewer dialog is open.
+    fn handle_secret_viewer_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+    ) -> Action {
+        use crossterm::event::KeyCode;
+
+        let Some(mut viewer) = self.secret_viewer.take() else {
+            return Action::Noop;
+        };
+
+        // Clear transient status on any keypress
+        viewer.status = None;
+
+        match code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Close viewer
+                return Action::Noop;
+            }
+            KeyCode::Char('r') => {
+                // Toggle reveal/mask
+                viewer.revealed = !viewer.revealed;
+                self.secret_viewer = Some(viewer);
+                return Action::Noop;
+            }
+            KeyCode::Char('c') => {
+                // Copy the selected field value to clipboard
+                if let Some((_label, value)) = viewer.fields.get(viewer.selected) {
+                    match Self::copy_to_clipboard(value) {
+                        Ok(()) => {
+                            viewer.status = Some("Copied!".to_string());
+                        }
+                        Err(e) => {
+                            viewer.status = Some(format!("Copy failed: {}", e));
+                        }
+                    }
+                }
+                self.secret_viewer = Some(viewer);
+                return Action::Noop;
+            }
+            KeyCode::Char('a') => {
+                // Copy all fields to clipboard
+                let text = viewer.fields.iter()
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                match Self::copy_to_clipboard(&text) {
+                    Ok(()) => {
+                        viewer.status = Some("All fields copied!".to_string());
+                    }
+                    Err(e) => {
+                        viewer.status = Some(format!("Copy failed: {}", e));
+                    }
+                }
+                self.secret_viewer = Some(viewer);
+                return Action::Noop;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if viewer.selected > 0 {
+                    viewer.selected -= 1;
+                }
+                self.secret_viewer = Some(viewer);
+                return Action::Noop;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if viewer.selected + 1 < viewer.fields.len() {
+                    viewer.selected += 1;
+                }
+                self.secret_viewer = Some(viewer);
+                return Action::Noop;
+            }
+            _ => {
+                self.secret_viewer = Some(viewer);
+                return Action::Noop;
+            }
+        }
+    }
+
+    /// Draw a centered secret-viewer dialog overlay.
+    fn draw_secret_viewer(
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        viewer: &SecretViewerState,
+    ) {
+        use crate::theme::tui_palette as tp;
+        use ratatui::widgets::{
+            Block, Borders, Clear, List, ListItem,
+        };
+
+        // Size: width up to 70, height = fields + header/status/hint + borders
+        let dialog_w = 70u16.min(area.width.saturating_sub(4));
+        let content_lines = viewer.fields.len() as u16 + 3; // fields + blank + status + blank
+        let dialog_h = (content_lines + 3)
+            .min(area.height.saturating_sub(4))
+            .max(8);
+        let x = area.x + (area.width.saturating_sub(dialog_w)) / 2;
+        let y = area.y + (area.height.saturating_sub(dialog_h)) / 2;
+        let dialog_area = Rect::new(x, y, dialog_w, dialog_h);
+
+        frame.render_widget(Clear, dialog_area);
+
+        let title = format!(" {} ", viewer.name);
+        let reveal_hint = if viewer.revealed { "r:hide" } else { "r:reveal" };
+        let hint = format!(
+            " ↑↓ select · c copy · a copy all · {} · Esc close ",
+            reveal_hint,
+        );
+
+        let block = Block::default()
+            .title(Span::styled(&title, tp::title_focused()))
+            .title_bottom(
+                Line::from(Span::styled(
+                    &hint,
+                    Style::default().fg(tp::MUTED),
+                ))
+                .right_aligned(),
+            )
+            .borders(Borders::ALL)
+            .border_style(tp::focused_border())
+            .border_type(ratatui::widgets::BorderType::Rounded);
+
+        let inner = block.inner(dialog_area);
+        frame.render_widget(block, dialog_area);
+
+        let max_label_w = viewer.fields.iter()
+            .map(|(k, _)| k.len())
+            .max()
+            .unwrap_or(0);
+
+        let mut items: Vec<ListItem> = Vec::new();
+
+        for (i, (label, value)) in viewer.fields.iter().enumerate() {
+            let is_selected = i == viewer.selected;
+            let display_value = if viewer.revealed {
+                value.clone()
+            } else {
+                "•".repeat(value.len().min(32))
+            };
+
+            // Truncate to fit dialog width
+            let avail = (dialog_w as usize).saturating_sub(max_label_w + 8);
+            let truncated = if display_value.len() > avail {
+                format!("{}…", &display_value[..avail.saturating_sub(1)])
+            } else {
+                display_value
+            };
+
+            let (marker, label_style, val_style) = if is_selected {
+                (
+                    "❯ ",
+                    Style::default()
+                        .fg(tp::ACCENT_BRIGHT)
+                        .add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(tp::TEXT)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                (
+                    "  ",
+                    Style::default().fg(tp::TEXT_DIM),
+                    Style::default().fg(tp::TEXT),
+                )
+            };
+
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(marker, Style::default().fg(tp::ACCENT)),
+                Span::styled(
+                    format!("{:>width$}: ", label, width = max_label_w),
+                    label_style,
+                ),
+                Span::styled(truncated, val_style),
+            ])));
+        }
+
+        // Status line
+        if let Some(ref status) = viewer.status {
+            items.push(ListItem::new(""));
+            items.push(ListItem::new(Line::from(Span::styled(
+                format!("  {}", status),
+                Style::default().fg(tp::SUCCESS).add_modifier(Modifier::BOLD),
+            ))));
+        }
+
+        let list = List::new(items).style(Style::default().fg(tp::TEXT));
+        frame.render_widget(list, inner);
     }
 }

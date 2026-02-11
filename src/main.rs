@@ -497,7 +497,7 @@ async fn main() -> Result<()> {
                 let response = send_command_via_gateway(&gateway_url, &input).await?;
                 println!("{}", response);
             } else {
-                run_local_command(&config, &input)?;
+                run_local_command(&mut config, &input)?;
             }
         }
 
@@ -881,7 +881,7 @@ fn config_unset(config: &mut Config, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_local_command(config: &Config, input: &str) -> Result<()> {
+fn run_local_command(config: &mut Config, input: &str) -> Result<()> {
     let mut secrets_manager = open_secrets(config)?;
     let skills_dir = config.skills_dir();
     let mut skill_manager = SkillManager::new(skills_dir);
@@ -890,6 +890,7 @@ fn run_local_command(config: &Config, input: &str) -> Result<()> {
     let mut context = CommandContext {
         secrets_manager: &mut secrets_manager,
         skill_manager: &mut skill_manager,
+        config,
     };
 
     let response = handle_command(input, &mut context);

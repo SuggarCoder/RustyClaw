@@ -691,6 +691,100 @@ impl SecretsManager {
         (label, SecretKind::Other)
     }
 
+    /// Retrieve a credential's value(s) as displayable `(label, value)` pairs
+    /// for the TUI secret viewer.
+    ///
+    /// This bypasses the disabled check and the access-policy check because
+    /// the *user* is physically present and explicitly asked to view the
+    /// secret.  For legacy bare-key secrets (no `cred:` metadata) the raw
+    /// value is returned directly.
+    pub fn peek_credential_display(&mut self, name: &str) -> Result<Vec<(String, String)>> {
+        let meta_key = format!("cred:{}", name);
+        let val_key = format!("val:{}", name);
+
+        // Check if this is a typed credential.
+        if let Some(json) = self.get_secret(&meta_key, true)? {
+            let entry: SecretEntry = serde_json::from_str(&json)
+                .context("Corrupted credential metadata")?;
+
+            let pairs = match entry.kind {
+                SecretKind::UsernamePassword => {
+                    let password = self.get_secret(&val_key, true)?.unwrap_or_default();
+                    let user_key = format!("val:{}:user", name);
+                    let username = self.get_secret(&user_key, true)?.unwrap_or_default();
+                    vec![
+                        ("Username".to_string(), username),
+                        ("Password".to_string(), password),
+                    ]
+                }
+                SecretKind::SshKey => {
+                    let private_key = self.get_secret(&val_key, true)?.unwrap_or_default();
+                    let pub_key = format!("val:{}:pub", name);
+                    let public_key = self.get_secret(&pub_key, true)?.unwrap_or_default();
+                    vec![
+                        ("Public Key".to_string(), public_key),
+                        ("Private Key".to_string(), private_key),
+                    ]
+                }
+                SecretKind::FormAutofill => {
+                    let fields_key = format!("val:{}:fields", name);
+                    let fields_json = self.get_secret(&fields_key, true)?
+                        .unwrap_or_else(|| "{}".to_string());
+                    let fields: BTreeMap<String, String> = serde_json::from_str(&fields_json)
+                        .unwrap_or_default();
+                    fields.into_iter().collect()
+                }
+                SecretKind::PaymentMethod => {
+                    let card_key = format!("val:{}:card", name);
+                    let card_json = self.get_secret(&card_key, true)?
+                        .unwrap_or_else(|| "{}".to_string());
+
+                    #[derive(Deserialize)]
+                    struct Card {
+                        #[serde(default)] cardholder: String,
+                        #[serde(default)] number: String,
+                        #[serde(default)] expiry: String,
+                        #[serde(default)] cvv: String,
+                    }
+                    let card: Card = serde_json::from_str(&card_json).unwrap_or(Card {
+                        cardholder: String::new(),
+                        number: String::new(),
+                        expiry: String::new(),
+                        cvv: String::new(),
+                    });
+
+                    let mut pairs = vec![
+                        ("Cardholder".to_string(), card.cardholder),
+                        ("Number".to_string(), card.number),
+                        ("Expiry".to_string(), card.expiry),
+                        ("CVV".to_string(), card.cvv),
+                    ];
+
+                    let extra_key = format!("val:{}:card_extra", name);
+                    if let Some(j) = self.get_secret(&extra_key, true)? {
+                        let extra: BTreeMap<String, String> =
+                            serde_json::from_str(&j).unwrap_or_default();
+                        for (k, v) in extra {
+                            pairs.push((k, v));
+                        }
+                    }
+                    pairs
+                }
+                _ => {
+                    let v = self.get_secret(&val_key, true)?.unwrap_or_default();
+                    vec![("Value".to_string(), v)]
+                }
+            };
+            return Ok(pairs);
+        }
+
+        // Legacy bare-key secret — return the raw value.
+        match self.get_secret(name, true)? {
+            Some(v) => Ok(vec![("Value".to_string(), v)]),
+            None => anyhow::bail!("Secret '{}' not found", name),
+        }
+    }
+
     /// Delete a typed credential and all its associated vault keys.
     pub fn delete_credential(&mut self, name: &str) -> Result<()> {
         // Every possible sub-key pattern — best-effort removal.
@@ -740,6 +834,34 @@ impl SecretsManager {
         };
 
         entry.disabled = disabled;
+
+        let meta_json = serde_json::to_string(&entry)
+            .context("Failed to serialize credential metadata")?;
+        self.store_secret(&meta_key, &meta_json)?;
+        Ok(())
+    }
+
+    /// Change the access policy of a credential.
+    pub fn set_credential_policy(&mut self, name: &str, policy: AccessPolicy) -> Result<()> {
+        let meta_key = format!("cred:{}", name);
+
+        let mut entry: SecretEntry = match self.get_secret(&meta_key, true)? {
+            Some(json) => serde_json::from_str(&json)
+                .context("Corrupted credential metadata")?,
+            None => {
+                // Legacy bare key — promote to typed entry.
+                let (label, kind) = Self::label_for_legacy_key(name);
+                SecretEntry {
+                    label,
+                    kind,
+                    policy: AccessPolicy::WithApproval,
+                    description: None,
+                    disabled: false,
+                }
+            }
+        };
+
+        entry.policy = policy;
 
         let meta_json = serde_json::to_string(&entry)
             .context("Failed to serialize credential metadata")?;
@@ -1624,6 +1746,65 @@ mod tests {
         let all = m.list_all_entries();
         let bare = all.iter().find(|(n, _)| n == "MY_BARE_KEY").unwrap();
         assert!(bare.1.disabled);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_set_credential_policy() {
+        let dir = temp_dir();
+        let mut m = SecretsManager::new(&dir);
+
+        let entry = SecretEntry {
+            label: "my key".to_string(),
+            kind: SecretKind::ApiKey,
+            policy: AccessPolicy::WithApproval,
+            description: None,
+            disabled: false,
+        };
+        m.store_credential("k", &entry, "secret", None).unwrap();
+
+        // Default policy is ASK (WithApproval).
+        let creds = m.list_credentials();
+        assert_eq!(creds[0].1.policy, AccessPolicy::WithApproval);
+
+        // Change to OPEN.
+        m.set_credential_policy("k", AccessPolicy::Always).unwrap();
+        let creds = m.list_credentials();
+        assert_eq!(creds[0].1.policy, AccessPolicy::Always);
+
+        // Change to AUTH.
+        m.set_credential_policy("k", AccessPolicy::WithAuth).unwrap();
+        let creds = m.list_credentials();
+        assert_eq!(creds[0].1.policy, AccessPolicy::WithAuth);
+
+        // Change to SKILL.
+        m.set_credential_policy("k", AccessPolicy::SkillOnly(vec!["web".to_string()])).unwrap();
+        let creds = m.list_credentials();
+        assert_eq!(creds[0].1.policy, AccessPolicy::SkillOnly(vec!["web".to_string()]));
+
+        // Change back to ASK.
+        m.set_credential_policy("k", AccessPolicy::WithApproval).unwrap();
+        let creds = m.list_credentials();
+        assert_eq!(creds[0].1.policy, AccessPolicy::WithApproval);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_set_policy_legacy_key_promotes_to_typed() {
+        let dir = temp_dir();
+        let mut m = SecretsManager::new(&dir);
+
+        // Store a bare-key secret (no cred: metadata).
+        m.store_secret("LEGACY_KEY", "legacy_val").unwrap();
+
+        // Setting policy should create a cred: entry.
+        m.set_credential_policy("LEGACY_KEY", AccessPolicy::Always).unwrap();
+
+        let all = m.list_all_entries();
+        let entry = all.iter().find(|(n, _)| n == "LEGACY_KEY").unwrap();
+        assert_eq!(entry.1.policy, AccessPolicy::Always);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

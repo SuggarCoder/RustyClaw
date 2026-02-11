@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::providers;
 use crate::secrets::SecretsManager;
 use crate::skills::SkillManager;
@@ -34,6 +35,7 @@ pub struct CommandResponse {
 pub struct CommandContext<'a> {
     pub secrets_manager: &'a mut SecretsManager,
     pub skill_manager: &'a mut SkillManager,
+    pub config: &'a mut Config,
 }
 
 /// List of all known command names (without the / prefix).
@@ -108,6 +110,8 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
         },
         "enable-access" => {
             context.secrets_manager.set_agent_access(true);
+            context.config.agent_access = true;
+            let _ = context.config.save(None);
             CommandResponse {
                 messages: vec!["Agent access to secrets enabled.".to_string()],
                 action: CommandAction::None,
@@ -115,6 +119,8 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
         }
         "disable-access" => {
             context.secrets_manager.set_agent_access(false);
+            context.config.agent_access = false;
+            let _ = context.config.save(None);
             CommandResponse {
                 messages: vec!["Agent access to secrets disabled.".to_string()],
                 action: CommandAction::None,
