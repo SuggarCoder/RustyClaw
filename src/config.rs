@@ -30,6 +30,10 @@ pub struct Config {
     /// Selected model provider and default model
     #[serde(default)]
     pub model: Option<ModelProvider>,
+    /// Whether the secrets vault is encrypted with a user password
+    /// (as opposed to an auto-generated key file).
+    #[serde(default)]
+    pub secrets_password_protected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +54,7 @@ impl Default for Config {
             use_secrets: true,
             gateway_url: None,
             model: None,
+            secrets_password_protected: false,
         }
     }
 }

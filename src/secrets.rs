@@ -5,14 +5,16 @@ use std::path::PathBuf;
 
 /// Secrets manager backed by an encrypted SecureStore vault.
 ///
-/// The vault is stored at `{settings_dir}/secrets.json` and its key at
-/// `{settings_dir}/secrets.key`.  On first use both files are created
-/// automatically using a CSPRNG-generated key.
+/// The vault is stored at `{settings_dir}/secrets.json`.  Encryption uses
+/// either a CSPRNG-generated key file (`{settings_dir}/secrets.key`) or a
+/// user-supplied password — never both.
 pub struct SecretsManager {
     /// Path to the vault JSON file
     vault_path: PathBuf,
-    /// Path to the key file
+    /// Path to the key file (only used when no password is set)
     key_path: PathBuf,
+    /// Optional user-supplied password (used instead of the key file)
+    password: Option<String>,
     /// In-memory vault handle (loaded lazily)
     vault: Option<securestore::SecretsManager>,
     /// Whether the agent can access secrets without prompting
@@ -35,38 +37,87 @@ impl SecretsManager {
         Self {
             vault_path: dir.join("secrets.json"),
             key_path: dir.join("secrets.key"),
+            password: None,
             vault: None,
             agent_access_enabled: false,
         }
     }
 
+    /// Create a `SecretsManager` that uses a password for encryption
+    /// instead of a key file.
+    pub fn with_password(settings_dir: impl Into<PathBuf>, password: String) -> Self {
+        let dir: PathBuf = settings_dir.into();
+        Self {
+            vault_path: dir.join("secrets.json"),
+            key_path: dir.join("secrets.key"),
+            password: Some(password),
+            vault: None,
+            agent_access_enabled: false,
+        }
+    }
+
+    /// Set the password after construction (e.g. after prompting the user).
+    pub fn set_password(&mut self, password: String) {
+        self.password = Some(password);
+        // Invalidate any previously loaded vault so it reloads with the
+        // new key source.
+        self.vault = None;
+    }
+
     /// Ensure the vault is loaded (or created if it doesn't exist yet).
     fn ensure_vault(&mut self) -> Result<&mut securestore::SecretsManager> {
         if self.vault.is_none() {
-            let vault = if self.vault_path.exists() && self.key_path.exists() {
-                securestore::SecretsManager::load(
-                    &self.vault_path,
-                    KeySource::from_file(&self.key_path),
-                )
-                .context("Failed to load secrets vault")?
+            let vault = if self.vault_path.exists() {
+                // Existing vault — load with password or key file.
+                if let Some(ref pw) = self.password {
+                    securestore::SecretsManager::load(
+                        &self.vault_path,
+                        KeySource::Password(pw),
+                    )
+                    .context("Failed to load secrets vault (wrong password?)")?
+                } else if self.key_path.exists() {
+                    securestore::SecretsManager::load(
+                        &self.vault_path,
+                        KeySource::from_file(&self.key_path),
+                    )
+                    .context("Failed to load secrets vault")?
+                } else {
+                    anyhow::bail!(
+                        "Secrets vault exists but no key file or password provided. \
+                         Run `rustyclaw onboard` to configure."
+                    );
+                }
             } else {
-                // First run: create a brand-new vault with a random key.
+                // First run: create a brand-new vault.
                 if let Some(parent) = self.vault_path.parent() {
                     std::fs::create_dir_all(parent)
                         .context("Failed to create secrets directory")?;
                 }
-                let sman = securestore::SecretsManager::new(KeySource::Csprng)
-                    .context("Failed to create new secrets vault")?;
-                sman.export_key(&self.key_path)
-                    .context("Failed to export secrets key")?;
-                sman.save_as(&self.vault_path)
-                    .context("Failed to save new secrets vault")?;
-                // Re-load so the vault knows its on-disk path (save() requires it).
-                securestore::SecretsManager::load(
-                    &self.vault_path,
-                    KeySource::from_file(&self.key_path),
-                )
-                .context("Failed to reload newly-created secrets vault")?
+                if let Some(ref pw) = self.password {
+                    // Password-based vault — no key file needed.
+                    let sman = securestore::SecretsManager::new(KeySource::Password(pw))
+                        .context("Failed to create new secrets vault")?;
+                    sman.save_as(&self.vault_path)
+                        .context("Failed to save new secrets vault")?;
+                    securestore::SecretsManager::load(
+                        &self.vault_path,
+                        KeySource::Password(pw),
+                    )
+                    .context("Failed to reload newly-created secrets vault")?
+                } else {
+                    // Key-file-based vault.
+                    let sman = securestore::SecretsManager::new(KeySource::Csprng)
+                        .context("Failed to create new secrets vault")?;
+                    sman.export_key(&self.key_path)
+                        .context("Failed to export secrets key")?;
+                    sman.save_as(&self.vault_path)
+                        .context("Failed to save new secrets vault")?;
+                    securestore::SecretsManager::load(
+                        &self.vault_path,
+                        KeySource::from_file(&self.key_path),
+                    )
+                    .context("Failed to reload newly-created secrets vault")?
+                }
             };
             self.vault = Some(vault);
         }
@@ -249,6 +300,37 @@ mod tests {
             let val = m.get_secret("persist", false).unwrap();
             assert_eq!(val, Some("yes".to_string()));
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_password_based_vault() {
+        let dir = temp_dir();
+
+        // Create a password-protected vault and store a secret.
+        {
+            let mut m = SecretsManager::with_password(&dir, "s3cret".to_string());
+            m.store_secret("token", "abc123").unwrap();
+        }
+
+        // Vault file should exist, but key file should NOT.
+        assert!(dir.join("secrets.json").exists());
+        assert!(!dir.join("secrets.key").exists());
+
+        // Reload with the correct password.
+        {
+            let mut m = SecretsManager::with_password(&dir, "s3cret".to_string());
+            m.set_agent_access(true);
+            let val = m.get_secret("token", false).unwrap();
+            assert_eq!(val, Some("abc123".to_string()));
+        }
+
+        // Wrong password should fail to load.
+        {
+            let mut m = SecretsManager::with_password(&dir, "wrong".to_string());
+            assert!(m.get_secret("token", true).is_err());
+        }
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

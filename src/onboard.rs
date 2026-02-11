@@ -145,6 +145,43 @@ pub fn run_onboard_wizard(
     println!("  ✓ Selected: {}", provider.display);
     println!();
 
+    // ── 1b. Optional password for secrets vault ────────────────────
+    let vault_exists = config.settings_dir.join("secrets.json").exists();
+    if !vault_exists {
+        println!("You can protect your secrets vault with a password.");
+        println!("If you skip this, a key file will be generated instead.");
+        println!();
+        println!("  ⚠  If you set a password you will need to enter it every");
+        println!("     time RustyClaw starts, including when the gateway is");
+        println!("     launched.  Automated / unattended starts will not be");
+        println!("     possible without the password.");
+        println!();
+
+        let pw = prompt_secret(&mut reader, "Vault password (leave blank to skip): ")?;
+        let pw = pw.trim().to_string();
+
+        if pw.is_empty() {
+            println!("  ✓ Using auto-generated key file (no password).");
+            config.secrets_password_protected = false;
+        } else {
+            let confirm = prompt_secret(&mut reader, "Confirm password: ")?;
+            if confirm.trim() != pw {
+                println!("  ⚠ Passwords do not match — falling back to key file.");
+                config.secrets_password_protected = false;
+            } else {
+                secrets.set_password(pw);
+                config.secrets_password_protected = true;
+                println!("  ✓ Secrets vault will be password-protected.");
+            }
+        }
+        println!();
+    } else if config.secrets_password_protected {
+        // Vault already exists with a password — make sure SecretsManager has it.
+        let pw = prompt_secret(&mut reader, "Enter vault password: ")?;
+        secrets.set_password(pw.trim().to_string());
+        println!();
+    }
+
     // ── 2. API key ─────────────────────────────────────────────────
     if let Some(secret_key) = provider.secret_key {
         // Check if we already have one stored.

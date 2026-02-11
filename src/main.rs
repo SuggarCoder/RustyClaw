@@ -60,11 +60,21 @@ async fn main() -> Result<()> {
 
     match cli.command.unwrap_or(Commands::Tui(TuiArgs::default())) {
         Commands::Onboard(args) => {
-            let mut secrets = SecretsManager::new(&config.settings_dir);
+            let mut secrets = if config.secrets_password_protected {
+                let pw = prompt_password("Enter secrets vault password: ")?;
+                SecretsManager::with_password(&config.settings_dir, pw)
+            } else {
+                SecretsManager::new(&config.settings_dir)
+            };
             run_onboard_wizard(&mut config, &mut secrets, args.reset)?;
         }
         Commands::Tui(_) => {
-            let mut app = App::new(config)?;
+            let mut app = if config.secrets_password_protected {
+                let pw = prompt_password("Enter secrets vault password: ")?;
+                App::with_password(config, pw)?
+            } else {
+                App::new(config)?
+            };
             app.run().await?;
         }
         Commands::Command(args) => {
@@ -85,8 +95,22 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn prompt_password(prompt: &str) -> Result<String> {
+    use std::io::{self, Write};
+    print!("{}", prompt);
+    io::stdout().flush()?;
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf)?;
+    Ok(buf.trim().to_string())
+}
+
 fn run_local_command(config: &Config, input: &str) -> Result<()> {
-    let mut secrets_manager = SecretsManager::new(&config.settings_dir);
+    let mut secrets_manager = if config.secrets_password_protected {
+        let pw = prompt_password("Enter secrets vault password: ")?;
+        SecretsManager::with_password(&config.settings_dir, pw)
+    } else {
+        SecretsManager::new(&config.settings_dir)
+    };
     let skills_dir = config
         .skills_dir
         .clone()
