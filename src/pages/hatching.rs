@@ -48,7 +48,8 @@ impl Hatching {
         Ok(Self {
             state: HatchState::Egg,
             tick: 0,
-            ticks_per_state: 8, // ~2 seconds at 4 ticks/sec
+            // At default tick rate of 4 ticks/sec (set in Tui::new), 8 ticks = ~2 seconds
+            ticks_per_state: 8,
             complete: false,
         })
     }

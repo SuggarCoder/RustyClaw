@@ -276,7 +276,7 @@ impl App {
         let _ = skill_manager.load_skills();
 
         let soul_path = config.soul_path();
-        let mut soul_manager = SoulManager::new(soul_path.clone());
+        let mut soul_manager = SoulManager::new(soul_path);
         
         // Check if we need to show the hatching animation
         let needs_hatching = soul_manager.needs_hatching();
