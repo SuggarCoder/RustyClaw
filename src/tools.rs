@@ -24,6 +24,31 @@ fn resolve_path(workspace_dir: &Path, path: &str) -> PathBuf {
     }
 }
 
+/// Expand a leading `~` to the user's home directory.
+fn expand_tilde(p: &str) -> PathBuf {
+    if p.starts_with('~') {
+        dirs::home_dir()
+            .map(|h| h.join(p.strip_prefix("~/").unwrap_or(&p[1..])))
+            .unwrap_or_else(|| PathBuf::from(p))
+    } else {
+        PathBuf::from(p)
+    }
+}
+
+/// Decide how to present a path found during a search.
+///
+/// If `found` lives inside `workspace_dir`, return a workspace-relative path
+/// so the model can pass it directly to `read_file` (which will resolve it
+/// back against `workspace_dir`).  Otherwise return the **absolute** path so
+/// the model can still use it with tools that accept absolute paths.
+fn display_path(found: &Path, workspace_dir: &Path) -> String {
+    if let Ok(rel) = found.strip_prefix(workspace_dir) {
+        rel.display().to_string()
+    } else {
+        found.display().to_string()
+    }
+}
+
 /// Filter for `walkdir` — skip common non-content directories.
 fn should_visit(entry: &walkdir::DirEntry) -> bool {
     let name = entry.file_name().to_string_lossy();
@@ -82,8 +107,11 @@ pub fn all_tools() -> Vec<&'static ToolDef> {
 pub static READ_FILE: ToolDef = ToolDef {
     name: "read_file",
     description: "Read the contents of a file. Returns the file text. \
-                  Use the optional start_line / end_line parameters to \
-                  read a specific range (1-based, inclusive).",
+                  Handles plain text files directly and can also extract \
+                  text from .docx, .doc, .rtf, .odt, .pdf, and .html files. \
+                  If you have an absolute path from find_files or search_files, \
+                  pass it exactly as-is. Use the optional start_line / end_line \
+                  parameters to read a specific range (1-based, inclusive).",
     parameters: vec![],  // filled by init; see `read_file_params()`.
     execute: exec_read_file,
 };
@@ -127,7 +155,7 @@ pub static SEARCH_FILES: ToolDef = ToolDef {
 
 pub static FIND_FILES: ToolDef = ToolDef {
     name: "find_files",
-    description: "Find files by name. Accepts plain keywords (case-insensitive \
+    description: "Find files by name. Returns paths that can be passed directly to read_file. Accepts plain keywords (case-insensitive \
                   substring match) OR glob patterns (e.g. '*.pdf'). Multiple \
                   keywords can be separated with spaces — a file matches if its \
                   name contains ANY keyword. Examples: 'resume', 'resume cv', \
@@ -156,10 +184,10 @@ pub fn read_file_params() -> Vec<ToolParam> {
     vec![
         ToolParam {
             name: "path".into(),
-            description: "Path to the file to read. Relative paths resolve \
-                          against the workspace root; use an absolute path \
-                          (e.g. '/Users/alice/notes.txt') to read files \
-                          outside the workspace."
+            description: "Path to the file to read. IMPORTANT: if you received \
+                          an absolute path from find_files or search_files \
+                          (starting with /), pass it exactly as-is. Only \
+                          relative paths are resolved against the workspace root."
                 .into(),
             param_type: "string".into(),
             required: true,
@@ -308,6 +336,32 @@ fn execute_command_params() -> Vec<ToolParam> {
 
 // ── Tool implementations ──────────────────────────────────────────────────────
 
+/// Extensions that `textutil` (macOS) can convert to plain text.
+const TEXTUTIL_EXTENSIONS: &[&str] = &[
+    "doc", "docx", "rtf", "rtfd", "odt", "wordml", "webarchive", "html",
+];
+
+/// Try to extract plain text from a rich document using macOS `textutil`.
+fn textutil_to_text(path: &Path) -> Option<String> {
+    let output = std::process::Command::new("textutil")
+        .args(["-convert", "txt", "-stdout"])
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    } else {
+        None
+    }
+}
+
 fn exec_read_file(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let path_str = args
         .get("path")
@@ -315,8 +369,79 @@ fn exec_read_file(args: &Value, workspace_dir: &Path) -> Result<String, String> 
         .ok_or_else(|| "Missing required parameter: path".to_string())?;
 
     let path = resolve_path(workspace_dir, path_str);
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read file '{}': {}", path.display(), e))?;
+
+    // First, try reading as UTF-8 plain text.
+    let content = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) => {
+            // If the file doesn't exist or can't be accessed at all, fail fast.
+            if e.kind() == std::io::ErrorKind::NotFound
+                || e.kind() == std::io::ErrorKind::PermissionDenied
+            {
+                return Err(format!("Failed to read file '{}': {}", path.display(), e));
+            }
+
+            // For binary / non-UTF8 files, try textutil on known document types.
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+
+            if TEXTUTIL_EXTENSIONS.contains(&ext.as_str()) {
+                match textutil_to_text(&path) {
+                    Some(text) => text,
+                    None => {
+                        return Err(format!(
+                            "Failed to extract text from '{}': textutil conversion failed",
+                            path.display(),
+                        ));
+                    }
+                }
+            } else if ext == "pdf" {
+                // Try textutil first (works for some PDFs on macOS), then
+                // fall back to pdftotext if available.
+                if let Some(text) = textutil_to_text(&path) {
+                    text
+                } else if let Ok(output) = std::process::Command::new("pdftotext")
+                    .args([path.to_string_lossy().as_ref(), "-"])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()
+                {
+                    if output.status.success() {
+                        let text = String::from_utf8_lossy(&output.stdout).to_string();
+                        if text.trim().is_empty() {
+                            return Err(format!(
+                                "'{}' is a PDF but no text could be extracted.",
+                                path.display(),
+                            ));
+                        }
+                        text
+                    } else {
+                        return Err(format!(
+                            "'{}' is a PDF. Install poppler (`brew install poppler`) \
+                             for pdftotext, or use execute_command to process it.",
+                            path.display(),
+                        ));
+                    }
+                } else {
+                    return Err(format!(
+                        "'{}' is a PDF. Install poppler (`brew install poppler`) for \
+                         pdftotext, or use execute_command to process it.",
+                        path.display(),
+                    ));
+                }
+            } else {
+                return Err(format!(
+                    "Failed to read file '{}': {} (binary file — use execute_command \
+                     to process it with an appropriate tool)",
+                    path.display(),
+                    e,
+                ));
+            }
+        }
+    };
 
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();
@@ -462,6 +587,7 @@ fn exec_search_files(args: &Value, workspace_dir: &Path) -> Result<String, Strin
     let include = args.get("include").and_then(|v| v.as_str());
 
     let base = match search_path {
+        Some(p) if p.starts_with('~') => expand_tilde(p),
         Some(p) => resolve_path(workspace_dir, p),
         None => workspace_dir.to_path_buf(),
     };
@@ -514,13 +640,9 @@ fn exec_search_files(args: &Value, workspace_dir: &Path) -> Result<String, Strin
                 break;
             }
             if line.to_lowercase().contains(&pattern_lower) {
-                let rel = entry
-                    .path()
-                    .strip_prefix(&base)
-                    .unwrap_or(entry.path());
                 results.push(format!(
                     "{}:{}: {}",
-                    rel.display(),
+                    display_path(entry.path(), workspace_dir),
                     line_num + 1,
                     line.trim()
                 ));
@@ -556,16 +678,8 @@ fn exec_find_files(args: &Value, workspace_dir: &Path) -> Result<String, String>
     let search_path = args.get("path").and_then(|v| v.as_str());
 
     let base = match search_path {
-        Some(p) => {
-            let expanded = if p.starts_with('~') {
-                dirs::home_dir()
-                    .map(|h| h.join(p.strip_prefix("~/").unwrap_or(&p[1..])))
-                    .unwrap_or_else(|| PathBuf::from(p))
-            } else {
-                resolve_path(workspace_dir, p)
-            };
-            expanded
-        }
+        Some(p) if p.starts_with('~') => expand_tilde(p),
+        Some(p) => resolve_path(workspace_dir, p),
         None => workspace_dir.to_path_buf(),
     };
 
@@ -590,8 +704,7 @@ fn exec_find_files(args: &Value, workspace_dir: &Path) -> Result<String, String>
                 break;
             }
             if let Ok(path) = entry {
-                let rel = path.strip_prefix(&base).unwrap_or(&path);
-                results.push(rel.display().to_string());
+                results.push(display_path(&path, workspace_dir));
             }
         }
 
@@ -630,11 +743,7 @@ fn exec_find_files(args: &Value, workspace_dir: &Path) -> Result<String, String>
 
             let name_lower = entry.file_name().to_string_lossy().to_lowercase();
             if keywords.iter().any(|kw| name_lower.contains(kw.as_str())) {
-                let rel = entry
-                    .path()
-                    .strip_prefix(&base)
-                    .unwrap_or(entry.path());
-                results.push(rel.display().to_string());
+                results.push(display_path(entry.path(), workspace_dir));
             }
         }
 
@@ -647,7 +756,12 @@ fn format_find_results(results: Vec<String>, max_results: usize) -> Result<Strin
         Ok("No files found.".to_string())
     } else {
         let count = results.len();
-        let mut output = results.join("\n");
+        let has_absolute = results.iter().any(|p| p.starts_with('/'));
+        let mut output = String::new();
+        if has_absolute {
+            output.push_str("(Use these exact paths with read_file)\n");
+        }
+        output.push_str(&results.join("\n"));
         if count >= max_results {
             output.push_str(&format!(
                 "\n\n(Results truncated at {} files)",

@@ -92,7 +92,7 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
             messages: vec![
                 "Available commands:".to_string(),
                 "  /help                    - Show this help".to_string(),
-                "  /clear                   - Clear messages".to_string(),
+                "  /clear                   - Clear messages and conversation memory".to_string(),
                 "  /enable-access           - Enable agent access to secrets".to_string(),
                 "  /disable-access          - Disable agent access to secrets".to_string(),
                 "  /onboard                 - Run setup wizard (use CLI: rustyclaw onboard)".to_string(),
@@ -109,7 +109,7 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
             action: CommandAction::None,
         },
         "clear" => CommandResponse {
-            messages: vec!["Messages cleared.".to_string()],
+            messages: vec!["Messages and conversation memory cleared.".to_string()],
             action: CommandAction::ClearMessages,
         },
         "enable-access" => {

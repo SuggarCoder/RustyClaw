@@ -12,6 +12,7 @@ use crate::action::Action;
 use crate::commands::{handle_command, CommandAction, CommandContext};
 use crate::config::Config;
 use crate::daemon;
+use crate::gateway::ChatMessage;
 use crate::pages::hatching::Hatching;
 use crate::pages::home::Home;
 use crate::pages::Page;
@@ -164,6 +165,9 @@ struct SecretViewerState {
 struct SharedState {
     config: Config,
     messages: Vec<DisplayMessage>,
+    /// Wire-format conversation history sent to the model each turn.
+    /// Includes system prompt (SOUL.md) and all user/assistant messages.
+    conversation_history: Vec<ChatMessage>,
     input_mode: InputMode,
     secrets_manager: SecretsManager,
     skill_manager: SkillManager,
@@ -316,11 +320,37 @@ impl App {
             (None, false)
         };
 
+        // Load persisted conversation history (if any).
+        let history_path = Self::history_path(&config);
+        let conversation_history = Self::load_history(&history_path, &soul_manager);
+
+        // Replay previous conversation turns into the display messages
+        // so the user can see their past context.
+        let mut messages = vec![DisplayMessage::info("Welcome to RustyClaw! Type /help for commands.")];
+        let prior_turns: usize = conversation_history
+            .iter()
+            .filter(|m| m.role != "system")
+            .count();
+        if prior_turns > 0 {
+            messages.push(DisplayMessage::info(format!(
+                "Restored {} turns from previous conversation. Use /clear to start fresh.",
+                prior_turns,
+            )));
+            for msg in &conversation_history {
+                match msg.role.as_str() {
+                    "user" => messages.push(DisplayMessage::user(&msg.content)),
+                    "assistant" => messages.push(DisplayMessage::assistant(&msg.content)),
+                    _ => {} // skip system prompt
+                }
+            }
+        }
+
         let gateway_status = GatewayStatus::Disconnected;
 
         let state = SharedState {
             config,
-            messages: vec![DisplayMessage::info("Welcome to RustyClaw! Type /help for commands.")],
+            messages,
+            conversation_history,
             input_mode: InputMode::Normal,
             secrets_manager,
             skill_manager,
@@ -879,8 +909,18 @@ impl App {
                         let trimmed = buf.trim_end().to_string();
                         if let Some(last) = self.state.messages.last_mut() {
                             if matches!(last.role, crate::panes::MessageRole::Assistant) {
-                                last.content = trimmed;
+                                last.content = trimmed.clone();
                             }
+                        }
+
+                        // Record the assistant turn in conversation history
+                        // and persist to disk so future sessions remember.
+                        if !trimmed.is_empty() {
+                            self.state.conversation_history.push(ChatMessage {
+                                role: "assistant".to_string(),
+                                content: trimmed,
+                            });
+                            self.save_history();
                         }
                     }
                     return Ok(Some(Action::Update));
@@ -1290,6 +1330,7 @@ impl App {
                 }
                 CommandAction::ClearMessages => {
                     self.state.messages.clear();
+                    self.clear_history();
                     for msg in response.messages {
                         self.state.messages.push(DisplayMessage::info(msg));
                     }
@@ -1376,9 +1417,16 @@ impl App {
             if matches!(self.state.gateway_status, GatewayStatus::Connected | GatewayStatus::ModelReady)
                 && self.ws_sink.is_some()
             {
+                // Append the new user turn to the running conversation history.
+                self.state.conversation_history.push(ChatMessage {
+                    role: "user".to_string(),
+                    content: text,
+                });
+                self.save_history();
+
                 let chat_json = serde_json::json!({
                     "type": "chat",
-                    "messages": [{"role": "user", "content": text}],
+                    "messages": self.state.conversation_history,
                 })
                 .to_string();
                 self.chat_loading_tick = Some(0);
@@ -1543,6 +1591,71 @@ impl App {
             "messages": messages,
         })
         .to_string()
+    }
+
+    // ── Conversation history helpers ────────────────────────────────────
+
+    /// Path to the persisted conversation history file.
+    fn history_path(config: &Config) -> std::path::PathBuf {
+        config.settings_dir.join("conversations").join("current.json")
+    }
+
+    /// Build the system prompt from SOUL.md.
+    fn system_message(soul: &SoulManager) -> Option<ChatMessage> {
+        soul.get_content().map(|text| ChatMessage {
+            role: "system".to_string(),
+            content: text.to_string(),
+        })
+    }
+
+    /// Load conversation history from disk, prepending the system prompt.
+    fn load_history(path: &std::path::Path, soul: &SoulManager) -> Vec<ChatMessage> {
+        let mut history = Vec::new();
+
+        // Always lead with the system prompt.
+        if let Some(sys) = Self::system_message(soul) {
+            history.push(sys);
+        }
+
+        // Append persisted turns (if the file exists).
+        if let Ok(data) = std::fs::read_to_string(path) {
+            if let Ok(turns) = serde_json::from_str::<Vec<ChatMessage>>(&data) {
+                history.extend(turns);
+            }
+        }
+
+        history
+    }
+
+    /// Save the user/assistant turns (without the system prompt) to disk.
+    fn save_history(&self) {
+        let path = Self::history_path(&self.state.config);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        // Strip the system prompt — we always regenerate it from SOUL.md.
+        let turns: Vec<&ChatMessage> = self
+            .state
+            .conversation_history
+            .iter()
+            .filter(|m| m.role != "system")
+            .collect();
+
+        if let Ok(json) = serde_json::to_string_pretty(&turns) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
+    /// Clear conversation history (in-memory and on-disk) and re-seed
+    /// the system prompt.
+    fn clear_history(&mut self) {
+        self.state.conversation_history.clear();
+        if let Some(sys) = Self::system_message(&self.state.soul_manager) {
+            self.state.conversation_history.push(sys);
+        }
+        let path = Self::history_path(&self.state.config);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// Send a text message to the gateway over the open WebSocket connection.
