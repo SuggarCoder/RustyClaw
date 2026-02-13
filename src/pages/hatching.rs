@@ -64,8 +64,6 @@ pub struct Hatching {
     complete: bool,
     /// Scroll offset for the awakened view
     scroll_offset: usize,
-    /// Agent name from config
-    agent_name: String,
     /// The system prompt (built once from agent_name)
     system_prompt: String,
 }
@@ -80,7 +78,6 @@ impl Hatching {
             ticks_per_state: 8,
             complete: false,
             scroll_offset: 0,
-            agent_name: agent_name.to_string(),
             system_prompt,
         })
     }
