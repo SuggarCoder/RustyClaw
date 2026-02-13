@@ -84,8 +84,6 @@ pub enum Action {
     BeginHatchingExchange,
     /// A gateway response routed to the hatching exchange
     HatchingResponse(String),
-    /// The user sent a message during the hatching exchange
-    HatchingSendMessage(String),
     /// The hatching exchange is complete — save SOUL.md and close
     FinishHatching(String),
     Noop,

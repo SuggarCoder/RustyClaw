@@ -800,9 +800,8 @@ impl App {
                 self.hatching_page = None;
                 return Ok(None);
             }
-            Action::BeginHatchingExchange | Action::HatchingSendMessage(_) => {
-                // Build a structured chat request with full conversation history
-                // and send it to the gateway for model completion.
+            Action::BeginHatchingExchange => {
+                // Build a structured chat request and send it to the gateway
                 let messages = self.hatching_page.as_ref().map(|h| h.chat_messages());
                 if let Some(msgs) = messages {
                     let chat_json = self.build_hatching_chat_request(msgs);
