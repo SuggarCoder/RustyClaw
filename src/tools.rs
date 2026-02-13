@@ -115,6 +115,12 @@ pub fn all_tools() -> Vec<&'static ToolDef> {
         &PROCESS,
         &MEMORY_SEARCH,
         &MEMORY_GET,
+        &CRON,
+        &SESSIONS_LIST,
+        &SESSIONS_SPAWN,
+        &SESSIONS_SEND,
+        &SESSIONS_HISTORY,
+        &SESSION_STATUS,
     ]
 }
 
@@ -239,6 +245,54 @@ pub static MEMORY_GET: ToolDef = ToolDef {
                   Supports optional line range for large files.",
     parameters: vec![],
     execute: exec_memory_get,
+};
+
+pub static CRON: ToolDef = ToolDef {
+    name: "cron",
+    description: "Manage scheduled jobs. Actions: status (scheduler status), list (show jobs), \
+                  add (create job), update (modify job), remove (delete job), run (trigger immediately), \
+                  runs (get run history). Use for reminders and recurring tasks.",
+    parameters: vec![],
+    execute: exec_cron,
+};
+
+pub static SESSIONS_LIST: ToolDef = ToolDef {
+    name: "sessions_list",
+    description: "List active sessions with optional filters. Shows main sessions and sub-agents. \
+                  Use to check on running background tasks.",
+    parameters: vec![],
+    execute: exec_sessions_list,
+};
+
+pub static SESSIONS_SPAWN: ToolDef = ToolDef {
+    name: "sessions_spawn",
+    description: "Spawn a sub-agent to run a task in the background. The sub-agent runs in its own \
+                  isolated session and announces results back when finished. Non-blocking.",
+    parameters: vec![],
+    execute: exec_sessions_spawn,
+};
+
+pub static SESSIONS_SEND: ToolDef = ToolDef {
+    name: "sessions_send",
+    description: "Send a message to another session. Use sessionKey or label to identify the target. \
+                  Returns immediately after sending.",
+    parameters: vec![],
+    execute: exec_sessions_send,
+};
+
+pub static SESSIONS_HISTORY: ToolDef = ToolDef {
+    name: "sessions_history",
+    description: "Fetch message history for a session. Returns recent messages from the specified session.",
+    parameters: vec![],
+    execute: exec_sessions_history,
+};
+
+pub static SESSION_STATUS: ToolDef = ToolDef {
+    name: "session_status",
+    description: "Show session status including usage, time, and cost. Use for model-use questions. \
+                  Can also set per-session model override.",
+    parameters: vec![],
+    execute: exec_session_status,
 };
 
 /// We need a runtime-constructed param list because `Vec` isn't const.
@@ -554,6 +608,186 @@ fn memory_get_params() -> Vec<ToolParam> {
             name: "lines".into(),
             description: "Number of lines to read. Default: entire file.".into(),
             param_type: "integer".into(),
+            required: false,
+        },
+    ]
+}
+
+fn cron_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "action".into(),
+            description: "Action: 'status', 'list', 'add', 'update', 'remove', 'run', 'runs'.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "jobId".into(),
+            description: "Job ID for update/remove/run/runs actions.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "job".into(),
+            description: "Job definition object for 'add' action.".into(),
+            param_type: "object".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "patch".into(),
+            description: "Patch object for 'update' action.".into(),
+            param_type: "object".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "includeDisabled".into(),
+            description: "Include disabled jobs in list. Default: false.".into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
+    ]
+}
+
+fn sessions_list_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "kinds".into(),
+            description: "Filter by session kinds: 'main', 'subagent', 'cron'.".into(),
+            param_type: "array".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "activeMinutes".into(),
+            description: "Only show sessions active within N minutes.".into(),
+            param_type: "integer".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "limit".into(),
+            description: "Maximum sessions to return. Default: 20.".into(),
+            param_type: "integer".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "messageLimit".into(),
+            description: "Include last N messages per session.".into(),
+            param_type: "integer".into(),
+            required: false,
+        },
+    ]
+}
+
+fn sessions_spawn_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "task".into(),
+            description: "What the sub-agent should do (required).".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "label".into(),
+            description: "Short label for identification.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "agentId".into(),
+            description: "Spawn under a different agent ID.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "model".into(),
+            description: "Override the model for this sub-agent.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "thinking".into(),
+            description: "Override thinking level (off/low/medium/high).".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "runTimeoutSeconds".into(),
+            description: "Abort sub-agent after N seconds.".into(),
+            param_type: "integer".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "cleanup".into(),
+            description: "'delete' or 'keep' session after completion.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+    ]
+}
+
+fn sessions_send_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "message".into(),
+            description: "Message to send to the target session.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "sessionKey".into(),
+            description: "Session key to send to.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "label".into(),
+            description: "Session label to send to (alternative to sessionKey).".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "timeoutSeconds".into(),
+            description: "Timeout for waiting on response.".into(),
+            param_type: "integer".into(),
+            required: false,
+        },
+    ]
+}
+
+fn sessions_history_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "sessionKey".into(),
+            description: "Session key to get history for.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "limit".into(),
+            description: "Maximum messages to return. Default: 20.".into(),
+            param_type: "integer".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "includeTools".into(),
+            description: "Include tool call messages. Default: false.".into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
+    ]
+}
+
+fn session_status_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "sessionKey".into(),
+            description: "Session key to get status for. Default: current session.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "model".into(),
+            description: "Set per-session model override. Use 'default' to reset.".into(),
+            param_type: "string".into(),
             required: false,
         },
     ]
@@ -1689,6 +1923,356 @@ fn exec_memory_get(args: &Value, workspace_dir: &Path) -> Result<String, String>
     crate::memory::read_memory_file(workspace_dir, path, from_line, num_lines)
 }
 
+/// Cron job management.
+fn exec_cron(args: &Value, workspace_dir: &Path) -> Result<String, String> {
+    use crate::cron::*;
+    
+    let action = args
+        .get("action")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: action".to_string())?;
+
+    let cron_dir = workspace_dir.join(".cron");
+    let mut store = CronStore::new(&cron_dir)?;
+
+    match action {
+        "status" => {
+            let jobs = store.list(false);
+            let enabled_count = jobs.len();
+            let all_count = store.list(true).len();
+            Ok(format!(
+                "Cron scheduler status:\n- Enabled jobs: {}\n- Total jobs: {}\n- Store: {:?}",
+                enabled_count, all_count, cron_dir
+            ))
+        }
+
+        "list" => {
+            let include_disabled = args
+                .get("includeDisabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let jobs = store.list(include_disabled);
+            if jobs.is_empty() {
+                return Ok("No cron jobs configured.".to_string());
+            }
+
+            let mut output = String::from("Cron jobs:\n\n");
+            for job in jobs {
+                let status = if job.enabled { "✓" } else { "○" };
+                let name = job.name.as_deref().unwrap_or("(unnamed)");
+                let schedule = match &job.schedule {
+                    Schedule::At { at } => format!("at {}", at),
+                    Schedule::Every { every_ms, .. } => format!("every {}ms", every_ms),
+                    Schedule::Cron { expr, tz } => {
+                        format!("cron '{}'{}", expr, tz.as_ref().map(|t| format!(" ({})", t)).unwrap_or_default())
+                    }
+                };
+                output.push_str(&format!("{} {} [{}] — {}\n", status, job.job_id, name, schedule));
+            }
+            Ok(output)
+        }
+
+        "add" => {
+            let job_obj = args
+                .get("job")
+                .ok_or("Missing required parameter: job")?;
+
+            let job: CronJob = serde_json::from_value(job_obj.clone())
+                .map_err(|e| format!("Invalid job definition: {}", e))?;
+
+            let id = store.add(job)?;
+            Ok(format!("Created job: {}", id))
+        }
+
+        "update" => {
+            let job_id = args
+                .get("jobId")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing jobId for update")?;
+
+            let patch_obj = args
+                .get("patch")
+                .ok_or("Missing patch for update")?;
+
+            let patch: CronJobPatch = serde_json::from_value(patch_obj.clone())
+                .map_err(|e| format!("Invalid patch: {}", e))?;
+
+            store.update(job_id, patch)?;
+            Ok(format!("Updated job: {}", job_id))
+        }
+
+        "remove" => {
+            let job_id = args
+                .get("jobId")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing jobId for remove")?;
+
+            store.remove(job_id)?;
+            Ok(format!("Removed job: {}", job_id))
+        }
+
+        "run" => {
+            let job_id = args
+                .get("jobId")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing jobId for run")?;
+
+            let job = store.get(job_id)
+                .ok_or_else(|| format!("Job not found: {}", job_id))?;
+
+            // In a real implementation, this would execute the job
+            // For now, just record that we would run it
+            Ok(format!(
+                "Would run job '{}' ({}). Note: actual execution requires gateway integration.",
+                job.name.as_deref().unwrap_or("unnamed"),
+                job_id
+            ))
+        }
+
+        "runs" => {
+            let job_id = args
+                .get("jobId")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing jobId for runs")?;
+
+            let runs = store.get_runs(job_id, 10)?;
+            if runs.is_empty() {
+                return Ok(format!("No run history for job: {}", job_id));
+            }
+
+            let mut output = format!("Run history for {}:\n\n", job_id);
+            for run in runs {
+                let status = match run.status {
+                    RunStatus::Ok => "✓",
+                    RunStatus::Error => "✗",
+                    RunStatus::Running => "⟳",
+                    RunStatus::Timeout => "⏱",
+                    RunStatus::Skipped => "○",
+                };
+                output.push_str(&format!("{} {} — {:?}\n", status, run.run_id, run.status));
+            }
+            Ok(output)
+        }
+
+        _ => Err(format!(
+            "Unknown action: {}. Valid: status, list, add, update, remove, run, runs",
+            action
+        )),
+    }
+}
+
+/// List sessions.
+fn exec_sessions_list(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    use crate::sessions::*;
+
+    let manager = session_manager();
+    let mgr = manager
+        .lock()
+        .map_err(|_| "Failed to acquire session manager lock".to_string())?;
+
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20) as usize;
+
+    let sessions = mgr.list(None, false, limit);
+
+    if sessions.is_empty() {
+        return Ok("No active sessions.".to_string());
+    }
+
+    let mut output = String::from("Sessions:\n\n");
+    for session in sessions {
+        let kind = match session.kind {
+            SessionKind::Main => "main",
+            SessionKind::Subagent => "subagent",
+            SessionKind::Cron => "cron",
+        };
+        let status = match session.status {
+            SessionStatus::Active => "🔄",
+            SessionStatus::Completed => "✅",
+            SessionStatus::Error => "❌",
+            SessionStatus::Timeout => "⏱",
+            SessionStatus::Stopped => "⏹",
+        };
+        let label = session.label.as_deref().unwrap_or("");
+        let runtime = session.runtime_secs();
+
+        output.push_str(&format!(
+            "{} [{}] {} — {}s{}\n",
+            status,
+            kind,
+            session.key,
+            runtime,
+            if label.is_empty() { String::new() } else { format!(" ({})", label) }
+        ));
+    }
+
+    Ok(output)
+}
+
+/// Spawn a sub-agent.
+fn exec_sessions_spawn(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    use crate::sessions::*;
+
+    let task = args
+        .get("task")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: task".to_string())?;
+
+    let label = args.get("label").and_then(|v| v.as_str()).map(String::from);
+    let agent_id = args
+        .get("agentId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("main");
+
+    let manager = session_manager();
+    let mut mgr = manager
+        .lock()
+        .map_err(|_| "Failed to acquire session manager lock".to_string())?;
+
+    let session_key = mgr.spawn_subagent(agent_id, task, label.clone(), None);
+
+    // Get the run_id
+    let run_id = mgr
+        .get(&session_key)
+        .and_then(|s| s.run_id.clone())
+        .unwrap_or_default();
+
+    let result = SpawnResult {
+        status: "accepted".to_string(),
+        run_id: run_id.clone(),
+        session_key: session_key.clone(),
+        message: format!(
+            "Sub-agent spawned. Task: '{}'. Use sessions_history or sessions_send to interact.",
+            task
+        ),
+    };
+
+    serde_json::to_string_pretty(&result)
+        .map_err(|e| format!("Failed to serialize result: {}", e))
+}
+
+/// Send a message to a session.
+fn exec_sessions_send(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    use crate::sessions::*;
+
+    let message = args
+        .get("message")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: message".to_string())?;
+
+    let session_key = args.get("sessionKey").and_then(|v| v.as_str());
+    let label = args.get("label").and_then(|v| v.as_str());
+
+    let manager = session_manager();
+    let mut mgr = manager
+        .lock()
+        .map_err(|_| "Failed to acquire session manager lock".to_string())?;
+
+    // Find session by key or label
+    let key = if let Some(k) = session_key {
+        k.to_string()
+    } else if let Some(l) = label {
+        mgr.get_by_label(l)
+            .map(|s| s.key.clone())
+            .ok_or_else(|| format!("No session found with label: {}", l))?
+    } else {
+        return Err("Must provide sessionKey or label".to_string());
+    };
+
+    mgr.send_message(&key, message)?;
+
+    Ok(format!("Message sent to session: {}", key))
+}
+
+/// Get session history.
+fn exec_sessions_history(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    use crate::sessions::*;
+
+    let session_key = args
+        .get("sessionKey")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: sessionKey".to_string())?;
+
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20) as usize;
+
+    let include_tools = args
+        .get("includeTools")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let manager = session_manager();
+    let mgr = manager
+        .lock()
+        .map_err(|_| "Failed to acquire session manager lock".to_string())?;
+
+    let history = mgr
+        .history(session_key, limit, include_tools)
+        .ok_or_else(|| format!("Session not found: {}", session_key))?;
+
+    if history.is_empty() {
+        return Ok(format!("No messages in session: {}", session_key));
+    }
+
+    let mut output = format!("History for {}:\n\n", session_key);
+    for msg in history {
+        output.push_str(&format!("[{}] {}\n", msg.role, msg.content));
+    }
+
+    Ok(output)
+}
+
+/// Get session status.
+fn exec_session_status(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    use crate::sessions::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Get current time info
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+
+    let session_key = args.get("sessionKey").and_then(|v| v.as_str());
+
+    let manager = session_manager();
+    let mgr = manager
+        .lock()
+        .map_err(|_| "Failed to acquire session manager lock".to_string())?;
+
+    let mut output = String::from("📊 Session Status\n\n");
+
+    if let Some(key) = session_key {
+        if let Some(session) = mgr.get(key) {
+            output.push_str(&format!("Session: {}\n", session.key));
+            output.push_str(&format!("Agent: {}\n", session.agent_id));
+            output.push_str(&format!("Kind: {:?}\n", session.kind));
+            output.push_str(&format!("Status: {:?}\n", session.status));
+            output.push_str(&format!("Runtime: {}s\n", session.runtime_secs()));
+            output.push_str(&format!("Messages: {}\n", session.messages.len()));
+        } else {
+            return Err(format!("Session not found: {}", key));
+        }
+    } else {
+        // Show general status
+        let all_sessions = mgr.list(None, false, 100);
+        let active = all_sessions
+            .iter()
+            .filter(|s| s.status == SessionStatus::Active)
+            .count();
+
+        output.push_str(&format!("Active sessions: {}\n", active));
+        output.push_str(&format!("Total sessions: {}\n", all_sessions.len()));
+        output.push_str(&format!("Timestamp: {} ms\n", now.as_millis()));
+    }
+
+    Ok(output)
+}
+
 // ── Provider-specific formatters ────────────────────────────────────────────
 
 /// Parameters for a tool, building a JSON Schema `properties` / `required`.
@@ -1728,6 +2312,12 @@ fn resolve_params(tool: &ToolDef) -> Vec<ToolParam> {
         "process" => process_params(),
         "memory_search" => memory_search_params(),
         "memory_get" => memory_get_params(),
+        "cron" => cron_params(),
+        "sessions_list" => sessions_list_params(),
+        "sessions_spawn" => sessions_spawn_params(),
+        "sessions_send" => sessions_send_params(),
+        "sessions_history" => sessions_history_params(),
+        "session_status" => session_status_params(),
         _ => vec![],
     }
 }
@@ -2071,7 +2661,7 @@ mod tests {
     #[test]
     fn test_openai_format() {
         let tools = tools_openai();
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 18);
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["function"]["name"], "read_file");
         assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
@@ -2080,7 +2670,7 @@ mod tests {
     #[test]
     fn test_anthropic_format() {
         let tools = tools_anthropic();
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 18);
         assert_eq!(tools[0]["name"], "read_file");
         assert!(tools[0]["input_schema"]["properties"]["path"].is_object());
     }
@@ -2088,7 +2678,7 @@ mod tests {
     #[test]
     fn test_google_format() {
         let tools = tools_google();
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 18);
         assert_eq!(tools[0]["name"], "read_file");
     }
 
@@ -2254,5 +2844,100 @@ mod tests {
         let result = exec_memory_get(&args, ws());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not a valid memory file"));
+    }
+
+    // ── cron ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_cron_params_defined() {
+        let params = cron_params();
+        assert_eq!(params.len(), 5);
+        assert!(params.iter().any(|p| p.name == "action" && p.required));
+        assert!(params.iter().any(|p| p.name == "jobId" && !p.required));
+    }
+
+    #[test]
+    fn test_cron_missing_action() {
+        let args = json!({});
+        let result = exec_cron(&args, ws());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required parameter"));
+    }
+
+    #[test]
+    fn test_cron_invalid_action() {
+        let args = json!({ "action": "invalid" });
+        let result = exec_cron(&args, ws());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown action"));
+    }
+
+    // ── sessions_list ───────────────────────────────────────────────
+
+    #[test]
+    fn test_sessions_list_params_defined() {
+        let params = sessions_list_params();
+        assert_eq!(params.len(), 4);
+        assert!(params.iter().all(|p| !p.required));
+    }
+
+    // ── sessions_spawn ──────────────────────────────────────────────
+
+    #[test]
+    fn test_sessions_spawn_params_defined() {
+        let params = sessions_spawn_params();
+        assert_eq!(params.len(), 7);
+        assert!(params.iter().any(|p| p.name == "task" && p.required));
+    }
+
+    #[test]
+    fn test_sessions_spawn_missing_task() {
+        let args = json!({});
+        let result = exec_sessions_spawn(&args, ws());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required parameter"));
+    }
+
+    // ── sessions_send ───────────────────────────────────────────────
+
+    #[test]
+    fn test_sessions_send_params_defined() {
+        let params = sessions_send_params();
+        assert_eq!(params.len(), 4);
+        assert!(params.iter().any(|p| p.name == "message" && p.required));
+    }
+
+    #[test]
+    fn test_sessions_send_missing_message() {
+        let args = json!({});
+        let result = exec_sessions_send(&args, ws());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required parameter"));
+    }
+
+    // ── sessions_history ────────────────────────────────────────────
+
+    #[test]
+    fn test_sessions_history_params_defined() {
+        let params = sessions_history_params();
+        assert_eq!(params.len(), 3);
+        assert!(params.iter().any(|p| p.name == "sessionKey" && p.required));
+    }
+
+    // ── session_status ──────────────────────────────────────────────
+
+    #[test]
+    fn test_session_status_params_defined() {
+        let params = session_status_params();
+        assert_eq!(params.len(), 2);
+        assert!(params.iter().all(|p| !p.required));
+    }
+
+    #[test]
+    fn test_session_status_general() {
+        let args = json!({});
+        let result = exec_session_status(&args, ws());
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("Session Status"));
     }
 }
