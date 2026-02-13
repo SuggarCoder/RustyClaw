@@ -25,9 +25,6 @@ pub use helpers::{
     expand_tilde, VAULT_ACCESS_DENIED, command_references_credentials,
 };
 
-// Internal use of helpers (import with different names to avoid conflict with re-exports)
-use helpers::{resolve_path, display_path, should_visit};
-
 // File operations
 use file::{exec_read_file, exec_write_file, exec_edit_file, exec_list_directory, exec_search_files, exec_find_files};
 

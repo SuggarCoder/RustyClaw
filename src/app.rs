@@ -1453,7 +1453,12 @@ impl App {
         let Some(dlg) = self.credential_dialog.take() else {
             return Action::Noop;
         };
-        let (new_dlg, new_picker, new_viewer, action) = dialogs::handle_credential_dialog_key(
+        let (new_dlg, new_picker, new_viewer, action): (
+            Option<dialogs::CredentialDialogState>,
+            Option<dialogs::PolicyPickerState>,
+            Option<dialogs::SecretViewerState>,
+            Action,
+        ) = dialogs::handle_credential_dialog_key(
             dlg,
             code,
             &mut self.state.secrets_manager,

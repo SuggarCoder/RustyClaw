@@ -4,7 +4,7 @@
 //! written to, and killed by the agent.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -272,8 +272,6 @@ fn read_nonblocking<R: Read + std::os::unix::io::AsRawFd>(
     reader: &mut R,
     buf: &mut [u8],
 ) -> std::io::Result<usize> {
-    use std::os::unix::io::AsRawFd;
-    
     let fd = reader.as_raw_fd();
     
     // Set non-blocking
