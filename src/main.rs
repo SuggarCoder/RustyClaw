@@ -716,9 +716,22 @@ async fn main() -> Result<()> {
 
                     let cancel = CancellationToken::new();
 
-                    // Load skills for the gateway.
-                    let skills_dir = config.skills_dir();
-                    let mut sm = SkillManager::new(skills_dir);
+                    // Load skills for the gateway from multiple directories.
+                    // Order: bundled (lowest priority) → user OpenClaw → user RustyClaw (highest)
+                    let mut skills_dirs = Vec::new();
+                    let openclaw_bundled = std::path::PathBuf::from("/usr/lib/node_modules/openclaw/skills");
+                    if openclaw_bundled.exists() {
+                        skills_dirs.push(openclaw_bundled);
+                    }
+                    if let Some(home) = dirs::home_dir() {
+                        let openclaw_user = home.join(".openclaw/workspace/skills");
+                        if openclaw_user.exists() {
+                            skills_dirs.push(openclaw_user);
+                        }
+                    }
+                    skills_dirs.push(config.skills_dir());
+                    
+                    let mut sm = SkillManager::with_dirs(skills_dirs);
                     if let Err(e) = sm.load_skills() {
                         eprintln!("⚠ Could not load skills: {}", e);
                     }
@@ -735,8 +748,21 @@ async fn main() -> Result<()> {
 
         // ── Skills sub-commands ─────────────────────────────────
         Commands::Skills(sub) => {
-            let skills_dir = config.skills_dir();
-            let mut sm = SkillManager::new(skills_dir);
+            // Use multiple directories for skills commands too
+            let mut skills_dirs = Vec::new();
+            let openclaw_bundled = std::path::PathBuf::from("/usr/lib/node_modules/openclaw/skills");
+            if openclaw_bundled.exists() {
+                skills_dirs.push(openclaw_bundled);
+            }
+            if let Some(home) = dirs::home_dir() {
+                let openclaw_user = home.join(".openclaw/workspace/skills");
+                if openclaw_user.exists() {
+                    skills_dirs.push(openclaw_user);
+                }
+            }
+            skills_dirs.push(config.skills_dir());
+            
+            let mut sm = SkillManager::with_dirs(skills_dirs);
             sm.load_skills()?;
 
             match sub {

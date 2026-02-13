@@ -225,9 +225,11 @@ impl SkillManager {
         self.registry_token = token;
     }
 
-    /// Get the primary skills directory (first in the list).
+    /// Get the primary skills directory (last in the list — user's writable dir).
+    /// Skills are loaded from first to last, with later dirs overriding earlier ones.
+    /// Installation goes to the last dir (user-writable, highest priority).
     pub fn primary_skills_dir(&self) -> Option<&Path> {
-        self.skills_dirs.first().map(|p| p.as_path())
+        self.skills_dirs.last().map(|p| p.as_path())
     }
 
     /// Load skills from all configured directories
@@ -765,9 +767,10 @@ impl SkillManager {
         // Response is a zip file
         let zip_bytes = resp.bytes().context("Failed to read zip data")?;
         
+        // Use last directory (user's writable dir) for installations, not first (bundled/read-only)
         let skills_dir = self
             .skills_dirs
-            .first()
+            .last()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("No skills directory configured"))?;
 
