@@ -1,0 +1,120 @@
+//! Helper functions and global state for the tools system.
+
+use crate::process_manager::{ProcessManager, SharedProcessManager};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+
+// ── Global process manager ──────────────────────────────────────────────────
+
+/// Global process manager for background exec sessions.
+static PROCESS_MANAGER: OnceLock<SharedProcessManager> = OnceLock::new();
+
+/// Get the global process manager instance.
+pub fn process_manager() -> &'static SharedProcessManager {
+    PROCESS_MANAGER.get_or_init(|| Arc::new(Mutex::new(ProcessManager::new())))
+}
+
+// ── Credentials directory protection ────────────────────────────────────────
+
+/// Absolute path of the credentials directory, set once at gateway startup.
+static CREDENTIALS_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Called once from the gateway to register the credentials path.
+pub fn set_credentials_dir(path: PathBuf) {
+    let _ = CREDENTIALS_DIR.set(path);
+}
+
+/// Returns `true` when a command string references the credentials directory.
+pub fn command_references_credentials(command: &str) -> bool {
+    if let Some(cred_dir) = CREDENTIALS_DIR.get() {
+        let cred_str = cred_dir.to_string_lossy();
+        command.contains(cred_str.as_ref())
+    } else {
+        false
+    }
+}
+
+/// Returns `true` when `path` falls inside the credentials directory.
+pub fn is_protected_path(path: &Path) -> bool {
+    if let Some(cred_dir) = CREDENTIALS_DIR.get() {
+        // Canonicalise both so symlinks / ".." can't bypass the check.
+        let canon_cred = match cred_dir.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return false, // dir doesn't exist yet – nothing to protect
+        };
+        let canon_path = match path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                // File may not exist yet (write_file).  Fall back to
+                // starts_with on the raw absolute path.
+                return path.starts_with(cred_dir);
+            }
+        };
+        canon_path.starts_with(&canon_cred)
+    } else {
+        false
+    }
+}
+
+/// Standard denial message when a tool tries to touch the vault.
+pub const VAULT_ACCESS_DENIED: &str =
+    "Access denied: the credentials directory is protected. Use the secrets_list / secrets_get / secrets_store tools instead.";
+
+// ── Path helpers ────────────────────────────────────────────────────────────
+
+/// Resolve a path argument against the workspace root.
+/// Absolute paths are used as-is; relative paths are joined to `workspace_dir`.
+pub fn resolve_path(workspace_dir: &Path, path: &str) -> PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        workspace_dir.join(p)
+    }
+}
+
+/// Expand a leading `~` to the user's home directory.
+pub fn expand_tilde(p: &str) -> PathBuf {
+    if p.starts_with('~') {
+        dirs::home_dir()
+            .map(|h| h.join(p.strip_prefix("~/").unwrap_or(&p[1..])))
+            .unwrap_or_else(|| PathBuf::from(p))
+    } else {
+        PathBuf::from(p)
+    }
+}
+
+/// Decide how to present a path found during a search.
+///
+/// If `found` lives inside `workspace_dir`, return a workspace-relative path
+/// so the model can pass it directly to `read_file` (which will resolve it
+/// back against `workspace_dir`).  Otherwise return the **absolute** path so
+/// the model can still use it with tools that accept absolute paths.
+pub fn display_path(found: &Path, workspace_dir: &Path) -> String {
+    if let Ok(rel) = found.strip_prefix(workspace_dir) {
+        rel.display().to_string()
+    } else {
+        found.display().to_string()
+    }
+}
+
+/// Filter for `walkdir` — skip common non-content directories.
+pub fn should_visit(entry: &walkdir::DirEntry) -> bool {
+    let name = entry.file_name().to_string_lossy();
+    if entry.file_type().is_dir() {
+        if matches!(
+            name.as_ref(),
+            ".git" | "node_modules" | "target" | ".hg" | ".svn"
+                | "__pycache__" | "dist" | "build"
+        ) {
+            return false;
+        }
+        // Never recurse into the credentials directory.
+        if is_protected_path(entry.path()) {
+            return false;
+        }
+        true
+    } else {
+        true
+    }
+}
