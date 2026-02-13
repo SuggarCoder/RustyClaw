@@ -13,6 +13,7 @@ pub mod pages;
 pub mod panes;
 pub mod process_manager;
 pub mod providers;
+pub mod sandbox;
 pub mod secrets;
 pub mod sessions;
 pub mod skills;

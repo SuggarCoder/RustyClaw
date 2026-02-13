@@ -12,6 +12,20 @@ pub struct ModelProvider {
     pub base_url: Option<String>,
 }
 
+/// Sandbox configuration for agent isolation.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SandboxConfig {
+    /// Sandbox mode: "none", "path", "bwrap", "landlock"
+    #[serde(default)]
+    pub mode: String,
+    /// Additional paths to deny (beyond credentials dir)
+    #[serde(default)]
+    pub deny_paths: Vec<PathBuf>,
+    /// Paths to allow in strict mode
+    #[serde(default)]
+    pub allow_paths: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Root state directory (e.g. `~/.rustyclaw`).
@@ -57,6 +71,9 @@ pub struct Config {
     /// Defaults to 5.
     #[serde(default = "Config::default_tab_width")]
     pub tab_width: u16,
+    /// Sandbox configuration for agent isolation.
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +102,7 @@ impl Default for Config {
             agent_name: Self::default_agent_name(),
             message_spacing: Self::default_message_spacing(),
             tab_width: Self::default_tab_width(),
+            sandbox: SandboxConfig::default(),
         }
     }
 }
