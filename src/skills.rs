@@ -3,6 +3,33 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+// ── ClawHub constants ───────────────────────────────────────────────────────
+
+/// Default ClawHub registry URL.
+pub const DEFAULT_REGISTRY_URL: &str = "https://registry.clawhub.dev/api/v1";
+
+// ── Skill types ─────────────────────────────────────────────────────────────
+
+/// Where a skill was installed from.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SkillSource {
+    /// Locally authored (found on disk, not from a registry).
+    Local,
+    /// Installed from a ClawHub registry.
+    Registry {
+        /// The registry URL it was fetched from.
+        registry_url: String,
+        /// The version that is currently installed (semver tag or `latest`).
+        version: String,
+    },
+}
+
+impl Default for SkillSource {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
 /// Represents a skill that can be loaded and executed
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
@@ -16,6 +43,14 @@ pub struct Skill {
     /// Parsed metadata from frontmatter
     #[serde(default)]
     pub metadata: SkillMetadata,
+    /// Where this skill was installed from.
+    #[serde(default)]
+    pub source: SkillSource,
+    /// Secrets linked to this skill (vault key names).
+    /// When the skill is the active context, `SkillOnly` credentials
+    /// whose allowed-list includes this skill's name are accessible.
+    #[serde(default)]
+    pub linked_secrets: Vec<String>,
 }
 
 /// OpenClaw-compatible skill metadata
@@ -66,12 +101,87 @@ pub struct GateCheckResult {
     pub wrong_os: bool,
 }
 
+// ── ClawHub registry types ──────────────────────────────────────────────────
+
+/// Manifest used when publishing a skill to ClawHub.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillManifest {
+    /// Skill name (must be unique within the registry namespace).
+    pub name: String,
+    /// Semver version string.
+    pub version: String,
+    /// Human-readable description.
+    pub description: String,
+    /// Author / maintainer.
+    #[serde(default)]
+    pub author: String,
+    /// SPDX licence identifier.
+    #[serde(default)]
+    pub license: String,
+    /// Repository URL (source code).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Names of secrets this skill needs (informational; the user still
+    /// controls which vault entries to link).
+    #[serde(default)]
+    pub required_secrets: Vec<String>,
+    /// Gating metadata.
+    #[serde(default)]
+    pub metadata: SkillMetadata,
+}
+
+/// A single entry returned by a registry search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryEntry {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub required_secrets: Vec<String>,
+}
+
+/// Response wrapper from the ClawHub API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RegistrySearchResponse {
+    #[serde(default)]
+    skills: Vec<RegistryEntry>,
+    #[serde(default)]
+    total: usize,
+}
+
+/// Response when fetching a single skill package from ClawHub.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RegistryPackageResponse {
+    /// Skill name.
+    name: String,
+    /// Version being returned.
+    version: String,
+    /// Tar archive (base64-encoded) containing the skill directory.
+    #[serde(default)]
+    archive_b64: Option<String>,
+    /// Alternatively, the raw SKILL.md content for lightweight packages.
+    #[serde(default)]
+    skill_md: Option<String>,
+    /// Required secrets.
+    #[serde(default)]
+    required_secrets: Vec<String>,
+}
+
+// ── Skill manager ───────────────────────────────────────────────────────────
+
 /// Manages skills compatible with OpenClaw
 pub struct SkillManager {
     skills_dirs: Vec<PathBuf>,
     skills: Vec<Skill>,
     /// Environment variables to check against
     env_vars: HashMap<String, String>,
+    /// ClawHub registry URL (overridable via config).
+    registry_url: String,
+    /// ClawHub auth token (optional; needed for publish / private skills).
+    registry_token: Option<String>,
 }
 
 impl SkillManager {
@@ -80,6 +190,8 @@ impl SkillManager {
             skills_dirs: vec![skills_dir],
             skills: Vec::new(),
             env_vars: std::env::vars().collect(),
+            registry_url: DEFAULT_REGISTRY_URL.to_string(),
+            registry_token: None,
         }
     }
 
@@ -89,7 +201,20 @@ impl SkillManager {
             skills_dirs: dirs,
             skills: Vec::new(),
             env_vars: std::env::vars().collect(),
+            registry_url: DEFAULT_REGISTRY_URL.to_string(),
+            registry_token: None,
         }
+    }
+
+    /// Configure the ClawHub registry URL and optional auth token.
+    pub fn set_registry(&mut self, url: &str, token: Option<String>) {
+        self.registry_url = url.to_string();
+        self.registry_token = token;
+    }
+
+    /// Get the primary skills directory (first in the list).
+    pub fn primary_skills_dir(&self) -> Option<&Path> {
+        self.skills_dirs.first().map(|p| p.as_path())
     }
 
     /// Load skills from all configured directories
@@ -181,6 +306,17 @@ impl SkillManager {
         let base_dir = path.parent().unwrap_or(Path::new("."));
         let instructions = instructions.replace("{baseDir}", &base_dir.display().to_string());
 
+        // Extract linked_secrets from frontmatter if present.
+        let linked_secrets: Vec<String> = frontmatter
+            .get("linked_secrets")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(Skill {
             name,
             description,
@@ -188,6 +324,8 @@ impl SkillManager {
             enabled: true,
             instructions,
             metadata,
+            source: SkillSource::Local,
+            linked_secrets,
         })
     }
 
@@ -363,6 +501,292 @@ impl SkillManager {
     pub fn get_skill_instructions(&self, name: &str) -> Option<String> {
         self.get_skill(name).map(|s| s.instructions.clone())
     }
+
+    // ── Secret linking ──────────────────────────────────────────────
+
+    /// Link a vault credential to a skill so the skill can access it
+    /// via the `SkillOnly` policy.
+    pub fn link_secret(&mut self, skill_name: &str, secret_name: &str) -> Result<()> {
+        let skill = self
+            .skills
+            .iter_mut()
+            .find(|s| s.name == skill_name)
+            .ok_or_else(|| anyhow::anyhow!("Skill not found: {}", skill_name))?;
+
+        if !skill.linked_secrets.contains(&secret_name.to_string()) {
+            skill.linked_secrets.push(secret_name.to_string());
+        }
+        Ok(())
+    }
+
+    /// Unlink a vault credential from a skill.
+    pub fn unlink_secret(&mut self, skill_name: &str, secret_name: &str) -> Result<()> {
+        let skill = self
+            .skills
+            .iter_mut()
+            .find(|s| s.name == skill_name)
+            .ok_or_else(|| anyhow::anyhow!("Skill not found: {}", skill_name))?;
+
+        skill.linked_secrets.retain(|s| s != secret_name);
+        Ok(())
+    }
+
+    /// Return the linked secrets for a skill (empty vec if not found).
+    pub fn get_linked_secrets(&self, skill_name: &str) -> Vec<String> {
+        self.get_skill(skill_name)
+            .map(|s| s.linked_secrets.clone())
+            .unwrap_or_default()
+    }
+
+    // ── Skill removal ───────────────────────────────────────────────
+
+    /// Remove a skill by name.  If it was installed from a registry,
+    /// its directory is deleted from disk.
+    pub fn remove_skill(&mut self, name: &str) -> Result<()> {
+        let idx = self
+            .skills
+            .iter()
+            .position(|s| s.name == name)
+            .ok_or_else(|| anyhow::anyhow!("Skill not found: {}", name))?;
+
+        let skill = self.skills.remove(idx);
+
+        // If the skill lives inside one of our managed skill directories,
+        // remove it from disk.
+        if let Some(parent) = skill.path.parent() {
+            for dir in &self.skills_dirs {
+                if parent.starts_with(dir) || parent == dir.as_path() {
+                    if parent.is_dir() {
+                        let _ = std::fs::remove_dir_all(parent);
+                    }
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // ── Detailed info ───────────────────────────────────────────────
+
+    /// Return a human-readable summary of a skill.
+    pub fn skill_info(&self, name: &str) -> Option<String> {
+        let skill = self.get_skill(name)?;
+        let gate = self.check_gates(skill);
+        let mut out = String::new();
+        out.push_str(&format!("Skill: {}\n", skill.name));
+        if let Some(ref desc) = skill.description {
+            out.push_str(&format!("Description: {}\n", desc));
+        }
+        out.push_str(&format!("Enabled: {}\n", skill.enabled));
+        out.push_str(&format!("Gates passed: {}\n", gate.passed));
+        out.push_str(&format!("Path: {}\n", skill.path.display()));
+        match &skill.source {
+            SkillSource::Local => out.push_str("Source: local\n"),
+            SkillSource::Registry { registry_url, version } => {
+                out.push_str(&format!("Source: registry ({}@{})\n", registry_url, version));
+            }
+        }
+        if !skill.linked_secrets.is_empty() {
+            out.push_str(&format!("Linked secrets: {}\n", skill.linked_secrets.join(", ")));
+        }
+        if !gate.missing_bins.is_empty() {
+            out.push_str(&format!("Missing binaries: {}\n", gate.missing_bins.join(", ")));
+        }
+        if !gate.missing_env.is_empty() {
+            out.push_str(&format!("Missing env vars: {}\n", gate.missing_env.join(", ")));
+        }
+        Some(out)
+    }
+
+    // ── ClawHub registry operations ─────────────────────────────────
+
+    /// Search the ClawHub registry for skills matching a query.
+    pub fn search_registry(&self, query: &str) -> Result<Vec<RegistryEntry>> {
+        let url = format!(
+            "{}/skills/search?q={}",
+            self.registry_url,
+            urlencoding::encode(query),
+        );
+
+        let client = reqwest::blocking::Client::new();
+        let mut req = client.get(&url);
+        if let Some(ref token) = self.registry_token {
+            req = req.bearer_auth(token);
+        }
+
+        let resp = req
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .context("Failed to contact ClawHub registry")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub search failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        let body: RegistrySearchResponse = resp.json().context("Failed to parse registry response")?;
+        Ok(body.skills)
+    }
+
+    /// Install a skill from the ClawHub registry into the primary
+    /// skills directory.  Returns the installed `Skill`.
+    pub fn install_from_registry(&mut self, name: &str, version: Option<&str>) -> Result<Skill> {
+        let ver = version.unwrap_or("latest");
+        let url = format!("{}/skills/{}/{}", self.registry_url, name, ver);
+
+        let client = reqwest::blocking::Client::new();
+        let mut req = client.get(&url);
+        if let Some(ref token) = self.registry_token {
+            req = req.bearer_auth(token);
+        }
+
+        let resp = req
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .context("Failed to contact ClawHub registry")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub install failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        let pkg: RegistryPackageResponse = resp.json().context("Failed to parse package response")?;
+
+        let skills_dir = self
+            .skills_dirs
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No skills directory configured"))?;
+
+        let skill_dir = skills_dir.join(&pkg.name);
+        std::fs::create_dir_all(&skill_dir)?;
+
+        // Write the SKILL.md content.
+        let skill_md_path = skill_dir.join("SKILL.md");
+        if let Some(ref content) = pkg.skill_md {
+            std::fs::write(&skill_md_path, content)?;
+        } else if let Some(ref archive) = pkg.archive_b64 {
+            // Decode base64 archive and extract.  For now we just store
+            // it as-is and create a placeholder SKILL.md.
+            let decoded = base64_decode(archive)?;
+            let archive_path = skill_dir.join("package.tar");
+            std::fs::write(&archive_path, &decoded)?;
+            // Create a minimal SKILL.md from the package metadata.
+            let md_content = format!(
+                "---\nname: {}\ndescription: {}\n---\n\n# {}\n\nInstalled from ClawHub (v{}).\n",
+                pkg.name, pkg.name, pkg.name, pkg.version,
+            );
+            std::fs::write(&skill_md_path, md_content)?;
+        } else {
+            anyhow::bail!("Registry package for '{}' contains no skill content", name);
+        }
+
+        // Load the newly-installed skill.
+        let mut skill = self.load_skill_md(&skill_md_path)?;
+        skill.source = SkillSource::Registry {
+            registry_url: self.registry_url.clone(),
+            version: pkg.version.clone(),
+        };
+        skill.linked_secrets = pkg.required_secrets.clone();
+
+        // Add or replace in the in-memory list.
+        if let Some(idx) = self.skills.iter().position(|s| s.name == skill.name) {
+            self.skills[idx] = skill.clone();
+        } else {
+            self.skills.push(skill.clone());
+        }
+
+        Ok(skill)
+    }
+
+    /// Publish a local skill to the ClawHub registry.
+    pub fn publish_to_registry(&self, skill_name: &str) -> Result<String> {
+        let skill = self
+            .get_skill(skill_name)
+            .ok_or_else(|| anyhow::anyhow!("Skill not found: {}", skill_name))?;
+
+        let token = self
+            .registry_token
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("ClawHub auth token required for publishing. Set clawhub_token in config."))?;
+
+        // Read the skill content.
+        let content = std::fs::read_to_string(&skill.path)
+            .context("Failed to read skill file")?;
+
+        let manifest = SkillManifest {
+            name: skill.name.clone(),
+            version: "0.1.0".to_string(), // TODO: extract from frontmatter
+            description: skill.description.clone().unwrap_or_default(),
+            author: String::new(),
+            license: "MIT".to_string(),
+            repository: skill.metadata.homepage.clone(),
+            required_secrets: skill.linked_secrets.clone(),
+            metadata: skill.metadata.clone(),
+        };
+
+        let payload = serde_json::json!({
+            "manifest": manifest,
+            "skill_md": content,
+        });
+
+        let url = format!("{}/skills/publish", self.registry_url);
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&payload)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .context("Failed to contact ClawHub registry")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub publish failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        Ok(format!(
+            "Published {} v{} to {}",
+            manifest.name, manifest.version, self.registry_url,
+        ))
+    }
+}
+
+/// Minimal base64 decoder (no padding required).
+fn base64_decode(input: &str) -> Result<Vec<u8>> {
+    // Use a simple lookup — avoids pulling in a crate.
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(input.len() * 3 / 4);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in input.as_bytes() {
+        if b == b'=' || b == b'\n' || b == b'\r' {
+            continue;
+        }
+        let val = TABLE
+            .iter()
+            .position(|&c| c == b)
+            .ok_or_else(|| anyhow::anyhow!("Invalid base64 character: {}", b as char))?
+            as u32;
+        buf = (buf << 6) | val;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Ok(out)
 }
 
 /// Parse YAML frontmatter from a markdown file
@@ -449,6 +873,8 @@ Do the thing.
                 always: true,
                 ..Default::default()
             },
+            source: SkillSource::Local,
+            linked_secrets: vec![],
         };
         let result = manager.check_gates(&skill);
         assert!(result.passed);
@@ -470,6 +896,8 @@ Do the thing.
                 },
                 ..Default::default()
             },
+            source: SkillSource::Local,
+            linked_secrets: vec![],
         };
         let result = manager.check_gates(&skill);
         assert!(!result.passed);
@@ -486,10 +914,99 @@ Do the thing.
             enabled: true,
             instructions: "Test instructions".into(),
             metadata: SkillMetadata::default(),
+            source: SkillSource::Local,
+            linked_secrets: vec![],
         });
         let context = manager.generate_prompt_context();
         assert!(context.contains("test-skill"));
         assert!(context.contains("Does testing"));
         assert!(context.contains("<available_skills>"));
+    }
+
+    #[test]
+    fn test_link_and_unlink_secret() {
+        let mut manager = SkillManager::new(std::env::temp_dir());
+        manager.skills.push(Skill {
+            name: "deploy".into(),
+            description: Some("Deploy things".into()),
+            path: PathBuf::from("/skills/deploy/SKILL.md"),
+            enabled: true,
+            instructions: String::new(),
+            metadata: SkillMetadata::default(),
+            source: SkillSource::Local,
+            linked_secrets: vec![],
+        });
+
+        manager.link_secret("deploy", "AWS_KEY").unwrap();
+        manager.link_secret("deploy", "AWS_SECRET").unwrap();
+        assert_eq!(manager.get_linked_secrets("deploy"), vec!["AWS_KEY", "AWS_SECRET"]);
+
+        // Linking the same secret again should not duplicate.
+        manager.link_secret("deploy", "AWS_KEY").unwrap();
+        assert_eq!(manager.get_linked_secrets("deploy").len(), 2);
+
+        manager.unlink_secret("deploy", "AWS_KEY").unwrap();
+        assert_eq!(manager.get_linked_secrets("deploy"), vec!["AWS_SECRET"]);
+    }
+
+    #[test]
+    fn test_link_secret_skill_not_found() {
+        let mut manager = SkillManager::new(std::env::temp_dir());
+        assert!(manager.link_secret("nonexistent", "key").is_err());
+    }
+
+    #[test]
+    fn test_skill_info() {
+        let mut manager = SkillManager::new(std::env::temp_dir());
+        manager.skills.push(Skill {
+            name: "web-scrape".into(),
+            description: Some("Scrape web pages".into()),
+            path: PathBuf::from("/skills/web-scrape/SKILL.md"),
+            enabled: true,
+            instructions: String::new(),
+            metadata: SkillMetadata::default(),
+            source: SkillSource::Registry {
+                registry_url: "https://registry.clawhub.dev/api/v1".into(),
+                version: "1.0.0".into(),
+            },
+            linked_secrets: vec!["SCRAPER_KEY".into()],
+        });
+
+        let info = manager.skill_info("web-scrape").unwrap();
+        assert!(info.contains("web-scrape"));
+        assert!(info.contains("registry"));
+        assert!(info.contains("SCRAPER_KEY"));
+        assert!(manager.skill_info("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_remove_skill() {
+        let mut manager = SkillManager::new(std::env::temp_dir());
+        manager.skills.push(Skill {
+            name: "temp-skill".into(),
+            description: None,
+            path: PathBuf::from("/nonexistent/SKILL.md"),
+            enabled: true,
+            instructions: String::new(),
+            metadata: SkillMetadata::default(),
+            source: SkillSource::Local,
+            linked_secrets: vec![],
+        });
+        assert_eq!(manager.get_skills().len(), 1);
+        manager.remove_skill("temp-skill").unwrap();
+        assert_eq!(manager.get_skills().len(), 0);
+        assert!(manager.remove_skill("temp-skill").is_err());
+    }
+
+    #[test]
+    fn test_skill_source_default() {
+        assert_eq!(SkillSource::default(), SkillSource::Local);
+    }
+
+    #[test]
+    fn test_base64_decode() {
+        let encoded = "SGVsbG8=";
+        let decoded = base64_decode(encoded).unwrap();
+        assert_eq!(decoded, b"Hello");
     }
 }

@@ -715,7 +715,20 @@ async fn main() -> Result<()> {
                     };
 
                     let cancel = CancellationToken::new();
-                    run_gateway(config, GatewayOptions { listen }, model_ctx, shared_vault, cancel).await?;
+
+                    // Load skills for the gateway.
+                    let skills_dir = config.skills_dir();
+                    let mut sm = SkillManager::new(skills_dir);
+                    if let Err(e) = sm.load_skills() {
+                        eprintln!("⚠ Could not load skills: {}", e);
+                    }
+                    if let Some(url) = config.clawhub_url.as_deref() {
+                        sm.set_registry(url, config.clawhub_token.clone());
+                    }
+                    let shared_skills: rustyclaw::gateway::SharedSkillManager =
+                        std::sync::Arc::new(tokio::sync::Mutex::new(sm));
+
+                    run_gateway(config, GatewayOptions { listen }, model_ctx, shared_vault, shared_skills, cancel).await?;
                 }
             }
         }

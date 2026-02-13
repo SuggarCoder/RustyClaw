@@ -74,6 +74,12 @@ pub struct Config {
     /// Sandbox configuration for agent isolation.
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    /// ClawHub registry URL (default: `https://registry.clawhub.dev/api/v1`).
+    #[serde(default)]
+    pub clawhub_url: Option<String>,
+    /// ClawHub API token for publishing / authenticated downloads.
+    #[serde(default)]
+    pub clawhub_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +109,8 @@ impl Default for Config {
             message_spacing: Self::default_message_spacing(),
             tab_width: Self::default_tab_width(),
             sandbox: SandboxConfig::default(),
+            clawhub_url: None,
+            clawhub_token: None,
         }
     }
 }

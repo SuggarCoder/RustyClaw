@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::providers;
 use crate::secrets::{AccessContext, AccessPolicy, CredentialValue, SecretEntry, SecretKind, SecretsManager};
+use crate::skills::SkillManager;
 use crate::tools;
 use anyhow::{Context, Result};
 use futures_util::stream::SplitSink;
@@ -158,6 +159,9 @@ async fn clear_rate_limit(limiter: &RateLimiter, ip: IpAddr) {
 /// The vault may start in a locked state (no password provided yet) and
 /// be unlocked later via a control message from an authenticated client.
 pub type SharedVault = Arc<Mutex<SecretsManager>>;
+
+/// Gateway-owned skill manager, shared across connections.
+pub type SharedSkillManager = Arc<Mutex<SkillManager>>;
 
 // ── Model context (resolved once at startup) ────────────────────────────────
 
@@ -571,6 +575,7 @@ pub async fn run_gateway(
     options: GatewayOptions,
     model_ctx: Option<ModelContext>,
     vault: SharedVault,
+    skill_mgr: SharedSkillManager,
     cancel: CancellationToken,
 ) -> Result<()> {
     // Register the credentials directory so file-access tools can enforce
@@ -604,12 +609,14 @@ pub async fn run_gateway(
                 let ctx_clone = model_ctx.clone();
                 let session_clone = copilot_session.clone();
                 let vault_clone = vault.clone();
+                let skill_clone = skill_mgr.clone();
                 let limiter_clone = rate_limiter.clone();
                 let child_cancel = cancel.child_token();
                 tokio::spawn(async move {
                     if let Err(err) = handle_connection(
                         stream, peer, config_clone, ctx_clone,
-                        session_clone, vault_clone, limiter_clone, child_cancel,
+                        session_clone, vault_clone, skill_clone,
+                        limiter_clone, child_cancel,
                     ).await {
                         eprintln!("Gateway connection error from {}: {}", peer, err);
                     }
@@ -647,6 +654,7 @@ async fn handle_connection(
     model_ctx: Option<Arc<ModelContext>>,
     copilot_session: Option<Arc<CopilotSession>>,
     vault: SharedVault,
+    skill_mgr: SharedSkillManager,
     rate_limiter: RateLimiter,
     cancel: CancellationToken,
 ) -> Result<()> {
@@ -933,6 +941,7 @@ async fn handle_connection(
                             &mut writer,
                             &workspace_dir,
                             &vault,
+                            &skill_mgr,
                         )
                         .await
                         {
@@ -1213,6 +1222,224 @@ async fn exec_secrets_store(
     ))
 }
 
+// ── Skill tool execution (gateway-side) ─────────────────────────────────────
+
+/// Dispatch a skill management tool call.
+///
+/// Like `execute_secrets_tool`, these tools bypass the normal
+/// `tools::execute_tool` path because they need access to the shared
+/// `SkillManager` that lives in the gateway process.
+async fn execute_skill_tool(
+    name: &str,
+    args: &serde_json::Value,
+    skill_mgr: &SharedSkillManager,
+) -> Result<String, String> {
+    match name {
+        "skill_list" => exec_gw_skill_list(args, skill_mgr).await,
+        "skill_search" => exec_gw_skill_search(args, skill_mgr).await,
+        "skill_install" => exec_gw_skill_install(args, skill_mgr).await,
+        "skill_info" => exec_gw_skill_info(args, skill_mgr).await,
+        "skill_enable" => exec_gw_skill_enable(args, skill_mgr).await,
+        "skill_link_secret" => exec_gw_skill_link_secret(args, skill_mgr).await,
+        _ => Err(format!("Unknown skill tool: {}", name)),
+    }
+}
+
+/// List all loaded skills, optionally filtered.
+async fn exec_gw_skill_list(
+    args: &serde_json::Value,
+    skill_mgr: &SharedSkillManager,
+) -> Result<String, String> {
+    let filter = args
+        .get("filter")
+        .and_then(|v| v.as_str())
+        .unwrap_or("all");
+
+    let mgr = skill_mgr.lock().await;
+    let skills = mgr.get_skills();
+
+    if skills.is_empty() {
+        return Ok("No skills loaded.".into());
+    }
+
+    let filtered: Vec<_> = skills
+        .iter()
+        .filter(|s| match filter {
+            "enabled" => s.enabled,
+            "disabled" => !s.enabled,
+            "registry" => matches!(s.source, crate::skills::SkillSource::Registry { .. }),
+            _ => true, // "all"
+        })
+        .collect();
+
+    if filtered.is_empty() {
+        return Ok(format!("No skills match filter '{}'.", filter));
+    }
+
+    let mut lines = Vec::with_capacity(filtered.len() + 1);
+    lines.push(format!("{} skill(s):\n", filtered.len()));
+    for s in &filtered {
+        let status = if s.enabled { "✓" } else { "✗" };
+        let source = match &s.source {
+            crate::skills::SkillSource::Local => "local".to_string(),
+            crate::skills::SkillSource::Registry { version, .. } => {
+                format!("registry v{}", version)
+            }
+        };
+        let secrets = if s.linked_secrets.is_empty() {
+            String::new()
+        } else {
+            format!(" [secrets: {}]", s.linked_secrets.join(", "))
+        };
+        lines.push(format!(
+            "  {} {} ({}) — {}{}\n",
+            status,
+            s.name,
+            source,
+            s.description.as_deref().unwrap_or("(no description)"),
+            secrets,
+        ));
+    }
+    Ok(lines.join(""))
+}
+
+/// Search the ClawHub registry.
+async fn exec_gw_skill_search(
+    args: &serde_json::Value,
+    skill_mgr: &SharedSkillManager,
+) -> Result<String, String> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: query".to_string())?;
+
+    let mgr = skill_mgr.lock().await;
+    let results = mgr.search_registry(query).map_err(|e| e.to_string())?;
+
+    if results.is_empty() {
+        return Ok(format!("No skills found matching '{}'.", query));
+    }
+
+    let mut lines = Vec::with_capacity(results.len() + 1);
+    lines.push(format!("{} result(s) for '{}':\n", results.len(), query));
+    for r in &results {
+        let secrets_note = if r.required_secrets.is_empty() {
+            String::new()
+        } else {
+            format!(" (needs: {})", r.required_secrets.join(", "))
+        };
+        lines.push(format!(
+            "  • {} v{} by {} — {}{}\n",
+            r.name, r.version, r.author, r.description, secrets_note,
+        ));
+    }
+    Ok(lines.join(""))
+}
+
+/// Install a skill from the ClawHub registry.
+async fn exec_gw_skill_install(
+    args: &serde_json::Value,
+    skill_mgr: &SharedSkillManager,
+) -> Result<String, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: name".to_string())?;
+    let version = args.get("version").and_then(|v| v.as_str());
+
+    let mut mgr = skill_mgr.lock().await;
+    mgr.install_from_registry(name, version).map_err(|e| e.to_string())?;
+
+    // Reload skills so the new one is available immediately.
+    mgr.load_skills().map_err(|e| e.to_string())?;
+
+    let version_note = version
+        .map(|v| format!(" v{}", v))
+        .unwrap_or_else(|| " (latest)".into());
+    Ok(format!(
+        "Skill '{}'{} installed from ClawHub and loaded.",
+        name, version_note,
+    ))
+}
+
+/// Show detailed information about a skill.
+async fn exec_gw_skill_info(
+    args: &serde_json::Value,
+    skill_mgr: &SharedSkillManager,
+) -> Result<String, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: name".to_string())?;
+
+    let mgr = skill_mgr.lock().await;
+    mgr.skill_info(name)
+        .ok_or_else(|| format!("Skill '{}' not found.", name))
+}
+
+/// Enable or disable a skill.
+async fn exec_gw_skill_enable(
+    args: &serde_json::Value,
+    skill_mgr: &SharedSkillManager,
+) -> Result<String, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: name".to_string())?;
+    let enabled = args
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .ok_or_else(|| "Missing required parameter: enabled".to_string())?;
+
+    let mut mgr = skill_mgr.lock().await;
+    mgr.set_skill_enabled(name, enabled)
+        .map_err(|e| e.to_string())?;
+
+    let state = if enabled { "enabled" } else { "disabled" };
+    Ok(format!("Skill '{}' is now {}.", name, state))
+}
+
+/// Link or unlink a vault credential to a skill.
+async fn exec_gw_skill_link_secret(
+    args: &serde_json::Value,
+    skill_mgr: &SharedSkillManager,
+) -> Result<String, String> {
+    let action = args
+        .get("action")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: action".to_string())?;
+    let skill = args
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: skill".to_string())?;
+    let secret = args
+        .get("secret")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: secret".to_string())?;
+
+    let mut mgr = skill_mgr.lock().await;
+    match action {
+        "link" => {
+            mgr.link_secret(skill, secret).map_err(|e| e.to_string())?;
+            Ok(format!(
+                "Secret '{}' linked to skill '{}'.",
+                secret, skill,
+            ))
+        }
+        "unlink" => {
+            mgr.unlink_secret(skill, secret).map_err(|e| e.to_string())?;
+            Ok(format!(
+                "Secret '{}' unlinked from skill '{}'.",
+                secret, skill,
+            ))
+        }
+        _ => Err(format!(
+            "Unknown action '{}'. Use 'link' or 'unlink'.",
+            action,
+        )),
+    }
+}
+
 /// Route an incoming text frame to the appropriate handler.
 ///
 /// Implements an agentic tool loop: the model is called, and if it
@@ -1227,6 +1454,7 @@ async fn dispatch_text_message(
     writer: &mut WsWriter,
     workspace_dir: &std::path::Path,
     vault: &SharedVault,
+    skill_mgr: &SharedSkillManager,
 ) -> Result<()> {
     // Try to parse as a structured JSON request.
     let req = match serde_json::from_str::<ChatRequest>(text) {
@@ -1381,6 +1609,12 @@ async fn dispatch_text_message(
             let (output, is_error) = if tools::is_secrets_tool(&tc.name) {
                 // Secrets tools are handled here — they need vault access.
                 match execute_secrets_tool(&tc.name, &tc.arguments, vault).await {
+                    Ok(text) => (text, false),
+                    Err(err) => (err, true),
+                }
+            } else if tools::is_skill_tool(&tc.name) {
+                // Skill tools are handled here — they need SkillManager access.
+                match execute_skill_tool(&tc.name, &tc.arguments, skill_mgr).await {
                     Ok(text) => (text, false),
                     Err(err) => (err, true),
                 }

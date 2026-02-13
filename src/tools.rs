@@ -176,6 +176,12 @@ pub fn all_tools() -> Vec<&'static ToolDef> {
         &NODES,
         &BROWSER,
         &CANVAS,
+        &SKILL_LIST,
+        &SKILL_SEARCH,
+        &SKILL_INSTALL,
+        &SKILL_INFO,
+        &SKILL_ENABLE,
+        &SKILL_LINK_SECRET,
     ]
 }
 
@@ -456,6 +462,56 @@ pub static CANVAS: ToolDef = ToolDef {
                   a2ui_push/a2ui_reset (accessibility-to-UI).",
     parameters: vec![],
     execute: exec_canvas,
+};
+
+pub static SKILL_LIST: ToolDef = ToolDef {
+    name: "skill_list",
+    description: "List all loaded skills with their status (enabled, gates, source, linked secrets). \
+                  Use to discover what capabilities are available.",
+    parameters: vec![],
+    execute: exec_skill_list,
+};
+
+pub static SKILL_SEARCH: ToolDef = ToolDef {
+    name: "skill_search",
+    description: "Search the ClawHub registry for installable skills. Returns skill names, \
+                  descriptions, versions, and required secrets.",
+    parameters: vec![],
+    execute: exec_skill_search,
+};
+
+pub static SKILL_INSTALL: ToolDef = ToolDef {
+    name: "skill_install",
+    description: "Install a skill from the ClawHub registry by name. Optionally specify a version. \
+                  After installation the skill is immediately available. Use skill_link_secret to \
+                  bind required credentials.",
+    parameters: vec![],
+    execute: exec_skill_install,
+};
+
+pub static SKILL_INFO: ToolDef = ToolDef {
+    name: "skill_info",
+    description: "Show detailed information about a loaded skill: description, source, linked \
+                  secrets, gating status, and instructions summary.",
+    parameters: vec![],
+    execute: exec_skill_info,
+};
+
+pub static SKILL_ENABLE: ToolDef = ToolDef {
+    name: "skill_enable",
+    description: "Enable or disable a loaded skill. Disabled skills are not injected into the \
+                  agent prompt and cannot be activated.",
+    parameters: vec![],
+    execute: exec_skill_enable,
+};
+
+pub static SKILL_LINK_SECRET: ToolDef = ToolDef {
+    name: "skill_link_secret",
+    description: "Link or unlink a vault credential to a skill. When linked, the secret is \
+                  accessible under the SkillOnly policy while the skill is active. Use action \
+                  'link' to bind or 'unlink' to remove the binding.",
+    parameters: vec![],
+    execute: exec_skill_link_secret,
 };
 
 /// We need a runtime-constructed param list because `Vec` isn't const.
@@ -1070,6 +1126,182 @@ fn canvas_params() -> Vec<ToolParam> {
             required: false,
         },
     ]
+}
+
+// ── Skill tool parameters ───────────────────────────────────────────────────
+
+fn skill_list_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "filter".into(),
+            description: "Optional filter: 'all' (default), 'enabled', 'disabled', 'registry'.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+    ]
+}
+
+fn skill_search_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "query".into(),
+            description: "Search query for the ClawHub registry.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+    ]
+}
+
+fn skill_install_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "name".into(),
+            description: "Name of the skill to install from ClawHub.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "version".into(),
+            description: "Specific version to install (default: latest).".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+    ]
+}
+
+fn skill_info_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "name".into(),
+            description: "Name of the skill to get info about.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+    ]
+}
+
+fn skill_enable_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "name".into(),
+            description: "Name of the skill to enable or disable.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "enabled".into(),
+            description: "Whether to enable (true) or disable (false) the skill.".into(),
+            param_type: "boolean".into(),
+            required: true,
+        },
+    ]
+}
+
+fn skill_link_secret_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "action".into(),
+            description: "Action: 'link' or 'unlink'.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "skill".into(),
+            description: "Name of the skill.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "secret".into(),
+            description: "Name of the vault credential to link/unlink.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+    ]
+}
+
+// ── Skill tool executors ────────────────────────────────────────────────────
+//
+// These are stub implementations.  The `skill_list`, `skill_info`, and
+// `skill_enable` tools work locally (the SkillManager is process-global via
+// the gateway).  `skill_search`, `skill_install`, `skill_link_secret` and
+// `skill_publish` require gateway interception for I/O-heavy work.  For now
+// they are routed through `execute_tool` with best-effort local stubs.
+
+/// The gateway holds the real SkillManager — these stubs return a
+/// "route through gateway" message so they work when called outside
+/// the gateway context (e.g. in tests).
+fn exec_skill_list(_args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    // Stub — the gateway intercepts this and uses its SkillManager.
+    Ok("No skills loaded (standalone mode). Connect to the gateway for full skill support.".into())
+}
+
+fn exec_skill_search(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: query".to_string())?;
+
+    // Standalone stub — real search goes through the gateway.
+    Err(format!(
+        "Registry search for '{}' requires gateway connection. Use /skill search {} in the TUI.",
+        query, query,
+    ))
+}
+
+fn exec_skill_install(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: name".to_string())?;
+
+    Err(format!(
+        "Installing '{}' from ClawHub requires gateway connection. Use /skill install {} in the TUI.",
+        name, name,
+    ))
+}
+
+fn exec_skill_info(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    let _name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: name".to_string())?;
+
+    Ok("Skill info requires gateway connection for full details.".into())
+}
+
+fn exec_skill_enable(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    let _name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: name".to_string())?;
+    let _enabled = args
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .ok_or_else(|| "Missing required parameter: enabled".to_string())?;
+
+    Err("Skill enable/disable requires gateway connection.".into())
+}
+
+fn exec_skill_link_secret(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    let action = args
+        .get("action")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: action".to_string())?;
+    let _skill = args
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: skill".to_string())?;
+    let _secret = args
+        .get("secret")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: secret".to_string())?;
+
+    if !matches!(action, "link" | "unlink") {
+        return Err(format!("Unknown action '{}'. Use 'link' or 'unlink'.", action));
+    }
+
+    Err("Skill secret linking requires gateway connection.".into())
 }
 
 /// Stub executor for secrets tools – always errors.
@@ -3705,6 +3937,12 @@ fn resolve_params(tool: &ToolDef) -> Vec<ToolParam> {
         "nodes" => nodes_params(),
         "browser" => browser_params(),
         "canvas" => canvas_params(),
+        "skill_list" => skill_list_params(),
+        "skill_search" => skill_search_params(),
+        "skill_install" => skill_install_params(),
+        "skill_info" => skill_info_params(),
+        "skill_enable" => skill_enable_params(),
+        "skill_link_secret" => skill_link_secret_params(),
         _ => vec![],
     }
 }
@@ -3790,6 +4028,21 @@ pub fn tools_google() -> Vec<Value> {
 /// (i.e. handled by `execute_secrets_tool`) rather than `execute_tool`.
 pub fn is_secrets_tool(name: &str) -> bool {
     matches!(name, "secrets_list" | "secrets_get" | "secrets_store")
+}
+
+/// Returns `true` for skill-management tools that are routed through the
+/// gateway (i.e. handled by `execute_skill_tool`) because they need access
+/// to the process-global `SkillManager`.
+pub fn is_skill_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "skill_list"
+            | "skill_search"
+            | "skill_install"
+            | "skill_info"
+            | "skill_enable"
+            | "skill_link_secret"
+    )
 }
 
 /// Find a tool by name and execute it with the given arguments.
@@ -4054,7 +4307,7 @@ mod tests {
     #[test]
     fn test_openai_format() {
         let tools = tools_openai();
-        assert_eq!(tools.len(), 30);
+        assert_eq!(tools.len(), 36);
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["function"]["name"], "read_file");
         assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
@@ -4063,7 +4316,7 @@ mod tests {
     #[test]
     fn test_anthropic_format() {
         let tools = tools_anthropic();
-        assert_eq!(tools.len(), 30);
+        assert_eq!(tools.len(), 36);
         assert_eq!(tools[0]["name"], "read_file");
         assert!(tools[0]["input_schema"]["properties"]["path"].is_object());
     }
@@ -4071,7 +4324,7 @@ mod tests {
     #[test]
     fn test_google_format() {
         let tools = tools_google();
-        assert_eq!(tools.len(), 30);
+        assert_eq!(tools.len(), 36);
         assert_eq!(tools[0]["name"], "read_file");
     }
 
@@ -4600,5 +4853,107 @@ mod tests {
         let result = exec_canvas(&args, ws());
         assert!(result.is_ok());
         assert!(result.unwrap().contains("canvas snapshot"));
+    }
+
+    // ── skill tools ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_skill_list_params_defined() {
+        let params = skill_list_params();
+        assert_eq!(params.len(), 1);
+        assert!(params.iter().any(|p| p.name == "filter" && !p.required));
+    }
+
+    #[test]
+    fn test_skill_search_params_defined() {
+        let params = skill_search_params();
+        assert_eq!(params.len(), 1);
+        assert!(params.iter().any(|p| p.name == "query" && p.required));
+    }
+
+    #[test]
+    fn test_skill_install_params_defined() {
+        let params = skill_install_params();
+        assert_eq!(params.len(), 2);
+        assert!(params.iter().any(|p| p.name == "name" && p.required));
+        assert!(params.iter().any(|p| p.name == "version" && !p.required));
+    }
+
+    #[test]
+    fn test_skill_info_params_defined() {
+        let params = skill_info_params();
+        assert_eq!(params.len(), 1);
+        assert!(params.iter().any(|p| p.name == "name" && p.required));
+    }
+
+    #[test]
+    fn test_skill_enable_params_defined() {
+        let params = skill_enable_params();
+        assert_eq!(params.len(), 2);
+        assert!(params.iter().any(|p| p.name == "name" && p.required));
+        assert!(params.iter().any(|p| p.name == "enabled" && p.required));
+    }
+
+    #[test]
+    fn test_skill_link_secret_params_defined() {
+        let params = skill_link_secret_params();
+        assert_eq!(params.len(), 3);
+        assert!(params.iter().any(|p| p.name == "action" && p.required));
+        assert!(params.iter().any(|p| p.name == "skill" && p.required));
+        assert!(params.iter().any(|p| p.name == "secret" && p.required));
+    }
+
+    #[test]
+    fn test_skill_list_standalone_stub() {
+        let result = exec_skill_list(&json!({}), ws());
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("standalone mode"));
+    }
+
+    #[test]
+    fn test_skill_search_missing_query() {
+        let result = exec_skill_search(&json!({}), ws());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required parameter"));
+    }
+
+    #[test]
+    fn test_skill_install_missing_name() {
+        let result = exec_skill_install(&json!({}), ws());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required parameter"));
+    }
+
+    #[test]
+    fn test_skill_info_missing_name() {
+        let result = exec_skill_info(&json!({}), ws());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required parameter"));
+    }
+
+    #[test]
+    fn test_skill_enable_missing_params() {
+        let result = exec_skill_enable(&json!({}), ws());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_skill_link_secret_bad_action() {
+        let args = json!({ "action": "nope", "skill": "x", "secret": "y" });
+        let result = exec_skill_link_secret(&args, ws());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown action"));
+    }
+
+    #[test]
+    fn test_is_skill_tool() {
+        assert!(is_skill_tool("skill_list"));
+        assert!(is_skill_tool("skill_search"));
+        assert!(is_skill_tool("skill_install"));
+        assert!(is_skill_tool("skill_info"));
+        assert!(is_skill_tool("skill_enable"));
+        assert!(is_skill_tool("skill_link_secret"));
+        assert!(!is_skill_tool("read_file"));
+        assert!(!is_skill_tool("secrets_list"));
     }
 }

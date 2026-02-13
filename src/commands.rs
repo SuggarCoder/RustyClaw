@@ -57,6 +57,14 @@ pub fn command_names() -> Vec<String> {
         "provider".into(),
         "model".into(),
         "skills".into(),
+        "skill".into(),
+        "skill info".into(),
+        "skill remove".into(),
+        "skill search".into(),
+        "skill install".into(),
+        "skill publish".into(),
+        "skill link-secret".into(),
+        "skill unlink-secret".into(),
         "secrets".into(),
         "quit".into(),
     ];
@@ -104,6 +112,7 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
                 "  /provider <name>         - Change the AI provider".to_string(),
                 "  /model <name>            - Change the AI model".to_string(),
                 "  /skills                  - Show loaded skills".to_string(),
+                "  /skill                   - Skill management (info/install/publish/link)".to_string(),
                 "  /secrets                 - Open the secrets vault".to_string(),
             ],
             action: CommandAction::None,
@@ -179,6 +188,7 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
             messages: Vec::new(),
             action: CommandAction::ShowSkills,
         },
+        "skill" => handle_skill_subcommand(&parts[1..], context),
         "secrets" => CommandResponse {
             messages: Vec::new(),
             action: CommandAction::ShowSecrets,
@@ -225,6 +235,196 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
             messages: vec![
                 format!("Unknown command: /{}", parts[0]),
                 "Type /help for available commands".to_string(),
+            ],
+            action: CommandAction::None,
+        },
+    }
+}
+
+fn handle_skill_subcommand(parts: &[&str], context: &mut CommandContext<'_>) -> CommandResponse {
+    match parts.first().copied() {
+        Some("info") => {
+            let name = parts.get(1).copied().unwrap_or("");
+            if name.is_empty() {
+                return CommandResponse {
+                    messages: vec!["Usage: /skill info <name>".to_string()],
+                    action: CommandAction::None,
+                };
+            }
+            match context.skill_manager.skill_info(name) {
+                Some(info) => CommandResponse {
+                    messages: vec![info],
+                    action: CommandAction::None,
+                },
+                None => CommandResponse {
+                    messages: vec![format!("Skill '{}' not found.", name)],
+                    action: CommandAction::None,
+                },
+            }
+        }
+        Some("remove") => {
+            let name = parts.get(1).copied().unwrap_or("");
+            if name.is_empty() {
+                return CommandResponse {
+                    messages: vec!["Usage: /skill remove <name>".to_string()],
+                    action: CommandAction::None,
+                };
+            }
+            match context.skill_manager.remove_skill(name) {
+                Ok(()) => CommandResponse {
+                    messages: vec![format!("Skill '{}' removed.", name)],
+                    action: CommandAction::None,
+                },
+                Err(e) => CommandResponse {
+                    messages: vec![e.to_string()],
+                    action: CommandAction::None,
+                },
+            }
+        }
+        Some("search") => {
+            let query = parts[1..].join(" ");
+            if query.is_empty() {
+                return CommandResponse {
+                    messages: vec!["Usage: /skill search <query>".to_string()],
+                    action: CommandAction::None,
+                };
+            }
+            match context.skill_manager.search_registry(&query) {
+                Ok(results) => {
+                    if results.is_empty() {
+                        CommandResponse {
+                            messages: vec![format!("No skills found matching '{}'.", query)],
+                            action: CommandAction::None,
+                        }
+                    } else {
+                        let mut msgs: Vec<String> = vec![format!(
+                            "{} result(s) for '{}':",
+                            results.len(),
+                            query,
+                        )];
+                        for r in &results {
+                            msgs.push(format!(
+                                "  • {} v{} by {} — {}",
+                                r.name, r.version, r.author, r.description,
+                            ));
+                        }
+                        CommandResponse {
+                            messages: msgs,
+                            action: CommandAction::None,
+                        }
+                    }
+                }
+                Err(e) => CommandResponse {
+                    messages: vec![format!("Registry search failed: {}", e)],
+                    action: CommandAction::None,
+                },
+            }
+        }
+        Some("install") => {
+            let name = parts.get(1).copied().unwrap_or("");
+            if name.is_empty() {
+                return CommandResponse {
+                    messages: vec!["Usage: /skill install <name> [version]".to_string()],
+                    action: CommandAction::None,
+                };
+            }
+            let version = parts.get(2).copied();
+            match context.skill_manager.install_from_registry(name, version) {
+                Ok(skill) => {
+                    let _ = context.skill_manager.load_skills();
+                    CommandResponse {
+                        messages: vec![format!("Skill '{}' installed from ClawHub.", skill.name)],
+                        action: CommandAction::None,
+                    }
+                }
+                Err(e) => CommandResponse {
+                    messages: vec![format!("Install failed: {}", e)],
+                    action: CommandAction::None,
+                },
+            }
+        }
+        Some("publish") => {
+            let name = parts.get(1).copied().unwrap_or("");
+            if name.is_empty() {
+                return CommandResponse {
+                    messages: vec!["Usage: /skill publish <name>".to_string()],
+                    action: CommandAction::None,
+                };
+            }
+            match context.skill_manager.publish_to_registry(name) {
+                Ok(msg) => CommandResponse {
+                    messages: vec![msg],
+                    action: CommandAction::None,
+                },
+                Err(e) => CommandResponse {
+                    messages: vec![format!("Publish failed: {}", e)],
+                    action: CommandAction::None,
+                },
+            }
+        }
+        Some("link-secret") => {
+            let skill = parts.get(1).copied().unwrap_or("");
+            let secret = parts.get(2).copied().unwrap_or("");
+            if skill.is_empty() || secret.is_empty() {
+                return CommandResponse {
+                    messages: vec!["Usage: /skill link-secret <skill> <secret>".to_string()],
+                    action: CommandAction::None,
+                };
+            }
+            match context.skill_manager.link_secret(skill, secret) {
+                Ok(_) => CommandResponse {
+                    messages: vec![format!(
+                        "Secret '{}' linked to skill '{}'.",
+                        secret, skill,
+                    )],
+                    action: CommandAction::None,
+                },
+                Err(e) => CommandResponse {
+                    messages: vec![format!("Link failed: {}", e)],
+                    action: CommandAction::None,
+                },
+            }
+        }
+        Some("unlink-secret") => {
+            let skill = parts.get(1).copied().unwrap_or("");
+            let secret = parts.get(2).copied().unwrap_or("");
+            if skill.is_empty() || secret.is_empty() {
+                return CommandResponse {
+                    messages: vec!["Usage: /skill unlink-secret <skill> <secret>".to_string()],
+                    action: CommandAction::None,
+                };
+            }
+            match context.skill_manager.unlink_secret(skill, secret) {
+                Ok(_) => CommandResponse {
+                    messages: vec![format!(
+                        "Secret '{}' unlinked from skill '{}'.",
+                        secret, skill,
+                    )],
+                    action: CommandAction::None,
+                },
+                Err(e) => CommandResponse {
+                    messages: vec![format!("Unlink failed: {}", e)],
+                    action: CommandAction::None,
+                },
+            }
+        }
+        Some(sub) => CommandResponse {
+            messages: vec![
+                format!("Unknown skill subcommand: {}", sub),
+                "Usage: /skill info|remove|search|install|publish|link-secret|unlink-secret".to_string(),
+            ],
+            action: CommandAction::None,
+        },
+        None => CommandResponse {
+            messages: vec![
+                "Skill commands:".to_string(),
+                "  /skill info <name>                 — Show skill details".to_string(),
+                "  /skill remove <name>               — Remove a skill".to_string(),
+                "  /skill search <query>              — Search ClawHub registry".to_string(),
+                "  /skill install <name> [version]    — Install from ClawHub".to_string(),
+                "  /skill publish <name>              — Publish to ClawHub".to_string(),
+                "  /skill link-secret <skill> <secret> — Link secret to skill".to_string(),
+                "  /skill unlink-secret <skill> <secret> — Unlink secret".to_string(),
             ],
             action: CommandAction::None,
         },
