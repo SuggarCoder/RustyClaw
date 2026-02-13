@@ -1028,7 +1028,9 @@ fn config_unset(config: &mut Config, path: &str) -> Result<()> {
 
 fn run_import(args: &ImportArgs, config: &mut Config) -> Result<()> {
     use colored::Colorize;
+    use rpassword::read_password;
     use std::fs;
+    use std::io::{BufRead, Write};
     use std::path::PathBuf;
 
     let home = dirs::home_dir().context("Could not determine home directory")?;
@@ -1076,10 +1078,125 @@ fn run_import(args: &ImportArgs, config: &mut Config) -> Result<()> {
     let mut imported_count = 0;
     let mut skipped_count = 0;
 
+    // ── Set up secure vault (password + optional 2FA) ───────────────────
+    let mut secrets = SecretsManager::new(&target_credentials);
+
+    if !args.skip_credentials && !args.dry_run {
+        println!("\n{}", "━".repeat(60).dimmed());
+        println!("{}", "Secrets Vault Setup".cyan().bold());
+        println!("{}", "━".repeat(60).dimmed());
+        println!();
+        println!("  Your API keys and tokens will be stored in an encrypted vault.");
+        println!("  You can protect it with a password for additional security.");
+        println!();
+        println!("  {}  If you set a password, you'll need to enter it each time", "⚠".yellow());
+        println!("     you start the agent. Without a password, an auto-generated");
+        println!("     key file will be used instead.");
+        println!();
+
+        // ── Password setup ──────────────────────────────────────────────
+        print!("{} ", "Vault password (leave blank to skip):".cyan());
+        std::io::stdout().flush()?;
+        let password = read_password().unwrap_or_default();
+
+        if password.trim().is_empty() {
+            println!("  {}", "✓ Using auto-generated key file (no password).".green());
+            config.secrets_password_protected = false;
+        } else {
+            // Confirm password
+            print!("{} ", "Confirm password:".cyan());
+            std::io::stdout().flush()?;
+            let confirm = read_password().unwrap_or_default();
+
+            if password != confirm {
+                anyhow::bail!("Passwords do not match. Import cancelled.");
+            }
+
+            secrets.set_password(password);
+            config.secrets_password_protected = true;
+            println!("  {}", "✓ Vault will be password-protected.".green());
+        }
+        println!();
+
+        // ── TOTP setup ──────────────────────────────────────────────────
+        println!("{}", "Two-Factor Authentication (optional)".cyan().bold());
+        println!();
+        println!("  You can add TOTP-based 2FA using any authenticator app");
+        println!("  (Google Authenticator, Authy, 1Password, etc.).");
+        println!();
+
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
+
+        print!("{} ", "Enable 2FA with an authenticator app? [y/N]:".cyan());
+        std::io::stdout().flush()?;
+        let mut response = String::new();
+        reader.read_line(&mut response)?;
+
+        if response.trim().eq_ignore_ascii_case("y") {
+            // Initialize vault so we can store the TOTP secret
+            secrets.store_secret("__init", "")?;
+            secrets.delete_secret("__init")?;
+
+            let account = std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "user".to_string());
+            let agent_name = config.agent_name.clone();
+            let otpauth_url = secrets.setup_totp_with_issuer(&account, &agent_name)?;
+
+            println!();
+            println!("  {}", "Scan this QR code with your authenticator app:".bold());
+            println!();
+            print_qr_code_import(&otpauth_url);
+            println!();
+            println!("  {}", "If you can't scan, enter the setup key manually.".dimmed());
+            println!("  {}", format!("The key is the {} parameter in the URL:", "secret".bold()).dimmed());
+            println!();
+            println!("  {}", otpauth_url.cyan());
+            println!();
+
+            // Verify the code
+            loop {
+                print!("{} ", "Enter the 6-digit code to verify:".cyan());
+                std::io::stdout().flush()?;
+                let mut code = String::new();
+                reader.read_line(&mut code)?;
+                let code = code.trim();
+
+                if code.is_empty() {
+                    println!("  {}", "⚠ 2FA setup cancelled.".yellow());
+                    secrets.remove_totp()?;
+                    break;
+                }
+
+                match secrets.verify_totp(code) {
+                    Ok(true) => {
+                        config.totp_enabled = true;
+                        println!("  {}", "✓ 2FA enabled — authenticator verified successfully.".green());
+                        break;
+                    }
+                    Ok(false) => {
+                        println!("  {}", "⚠ Invalid code. Try again (or leave blank to cancel):".yellow());
+                    }
+                    Err(e) => {
+                        println!("  {}", format!("⚠ Error verifying code: {}. 2FA not enabled.", e).yellow());
+                        secrets.remove_totp()?;
+                        break;
+                    }
+                }
+            }
+        } else {
+            println!("  {}", "Skipping 2FA. You can enable it later with rustyclaw onboard.".dimmed());
+        }
+        println!();
+    }
+
     // ── Import openclaw.json config ─────────────────────────────────────
     let openclaw_config_path = source_dir.join("openclaw.json");
     if openclaw_config_path.exists() {
-        println!("\n{} Importing configuration...", "•".cyan());
+        println!("{}", "━".repeat(60).dimmed());
+        println!("{}", "Importing Configuration".cyan().bold());
+        println!("{}", "━".repeat(60).dimmed());
         if let Ok(content) = fs::read_to_string(&openclaw_config_path) {
             if let Ok(oc_config) = serde_json::from_str::<serde_json::Value>(&content) {
                 // Extract model config
@@ -1116,7 +1233,10 @@ fn run_import(args: &ImportArgs, config: &mut Config) -> Result<()> {
     if !args.skip_workspace {
         let source_workspace = source_dir.join("workspace");
         if source_workspace.exists() {
-            println!("\n{} Importing workspace files...", "•".cyan());
+            println!();
+            println!("{}", "━".repeat(60).dimmed());
+            println!("{}", "Importing Workspace Files".cyan().bold());
+            println!("{}", "━".repeat(60).dimmed());
 
             // Files to import from workspace root
             let workspace_files = [
@@ -1182,11 +1302,14 @@ fn run_import(args: &ImportArgs, config: &mut Config) -> Result<()> {
         }
     }
 
-    // ── Import credentials ──────────────────────────────────────────────
+    // ── Import credentials into the secured vault ───────────────────────
     if !args.skip_credentials {
         let source_credentials = source_dir.join("credentials");
         if source_credentials.exists() {
-            println!("\n{} Importing credentials...", "•".cyan());
+            println!();
+            println!("{}", "━".repeat(60).dimmed());
+            println!("{}", "Importing Credentials".cyan().bold());
+            println!("{}", "━".repeat(60).dimmed());
 
             // Map of OpenClaw credential files to secrets
             let credential_files = [
@@ -1197,8 +1320,6 @@ fn run_import(args: &ImportArgs, config: &mut Config) -> Result<()> {
                 ("gemini.key", "GEMINI_API_KEY"),
                 ("xai.key", "XAI_API_KEY"),
             ];
-
-            let mut secrets = SecretsManager::new(&target_credentials);
 
             for (file, secret_name) in &credential_files {
                 let src = source_credentials.join(file);
@@ -1240,16 +1361,27 @@ fn run_import(args: &ImportArgs, config: &mut Config) -> Result<()> {
         config.workspace_dir = Some(target_workspace.clone());
         config.credentials_dir = Some(target_credentials);
         config.save(Some(target_dir.join("rustyclaw.toml")))?;
-        println!("\n{} Saved config to {}", "✓".green(), target_dir.join("rustyclaw.toml").display());
+        println!();
+        println!("{}", "━".repeat(60).dimmed());
+        println!("{} Saved config to {}", "✓".green(), target_dir.join("rustyclaw.toml").display());
     }
 
     // ── Summary ─────────────────────────────────────────────────────────
+    println!();
+    println!("{}", "━".repeat(60).dimmed());
     println!(
-        "\n{} Import complete: {} items imported, {} skipped",
+        "{} Import complete: {} items imported, {} skipped",
         "✓".green().bold(),
         imported_count.to_string().green(),
         skipped_count.to_string().yellow()
     );
+
+    if config.secrets_password_protected {
+        println!("  {} Vault is password-protected", "🔒".to_string());
+    }
+    if config.totp_enabled {
+        println!("  {} 2FA is enabled", "🔐".to_string());
+    }
 
     if args.dry_run {
         println!("\n{}", "Run without --dry-run to apply changes.".dimmed());
@@ -1262,6 +1394,24 @@ fn run_import(args: &ImportArgs, config: &mut Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Print a QR code to the terminal (simplified version for import)
+fn print_qr_code_import(data: &str) {
+    use qrcode::{QrCode, render::unicode};
+
+    if let Ok(code) = QrCode::new(data.as_bytes()) {
+        let image = code
+            .render::<unicode::Dense1x2>()
+            .dark_color(unicode::Dense1x2::Light)
+            .light_color(unicode::Dense1x2::Dark)
+            .build();
+        for line in image.lines() {
+            println!("    {}", line);
+        }
+    } else {
+        println!("  (Could not generate QR code)");
+    }
 }
 
 fn run_local_command(config: &mut Config, input: &str) -> Result<()> {
