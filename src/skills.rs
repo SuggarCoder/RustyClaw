@@ -474,13 +474,25 @@ impl SkillManager {
     /// Generate prompt context for all eligible skills
     pub fn generate_prompt_context(&self) -> String {
         let eligible = self.get_eligible_skills();
+        
+        let mut context = String::from("## Skills (mandatory)\n\n");
+        context.push_str("Before replying: scan <available_skills> <description> entries.\n");
+        context.push_str("- If exactly one skill clearly applies: read its SKILL.md at <location> with `read_file`, then follow it.\n");
+        context.push_str("- If multiple could apply: choose the most specific one, then read/follow it.\n");
+        context.push_str("- If none clearly apply: do not read any SKILL.md.\n");
+        context.push_str("Constraints: never read more than one skill up front; only read after selecting.\n\n");
+        context.push_str("The following skills provide specialized instructions for specific tasks.\n");
+        context.push_str("Use the read_file tool to load a skill's file when the task matches its description.\n");
+        context.push_str("When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n");
+        
         if eligible.is_empty() {
-            return String::new();
+            context.push_str("No skills are currently loaded.\n\n");
+            context.push_str("To find and install skills:\n");
+            context.push_str("- Browse: https://clawhub.com\n");
+            context.push_str("- Install: `npm i -g clawhub && clawhub install <skill-name>`\n");
+            return context;
         }
 
-        let mut context = String::from("## Available Skills\n\n");
-        context.push_str("The following skills provide specialized instructions for specific tasks.\n");
-        context.push_str("Use the read tool to load a skill's file when the task matches its description.\n\n");
         context.push_str("<available_skills>\n");
 
         for skill in eligible {
@@ -493,7 +505,12 @@ impl SkillManager {
             context.push_str("  </skill>\n");
         }
 
-        context.push_str("</available_skills>\n");
+        context.push_str("</available_skills>\n\n");
+        
+        // Add note about ClawHub for finding more skills
+        context.push_str("To find more skills: https://clawhub.com\n");
+        context.push_str("To install a skill: `clawhub install <skill-name>` (requires npm i -g clawhub)\n");
+        
         context
     }
 

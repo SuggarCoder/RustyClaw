@@ -1242,9 +1242,13 @@ fn exec_skill_search(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: query".to_string())?;
 
-    // Standalone stub — real search goes through the gateway.
-    Err(format!(
-        "Registry search for '{}' requires gateway connection. Use /skill search {} in the TUI.",
+    // Point users to the clawhub CLI
+    Ok(format!(
+        "To search for skills matching '{}':\n\n\
+         1. Install the ClawHub CLI: npm i -g clawhub\n\
+         2. Search: clawhub search \"{}\"\n\
+         3. Install: clawhub install <skill-name>\n\n\
+         Or browse skills at: https://clawhub.com",
         query, query,
     ))
 }
@@ -1255,8 +1259,11 @@ fn exec_skill_install(args: &Value, _workspace_dir: &Path) -> Result<String, Str
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: name".to_string())?;
 
-    Err(format!(
-        "Installing '{}' from ClawHub requires gateway connection. Use /skill install {} in the TUI.",
+    Ok(format!(
+        "To install the '{}' skill:\n\n\
+         1. Install the ClawHub CLI (if not already): npm i -g clawhub\n\
+         2. Install the skill: clawhub install {}\n\n\
+         The skill will be installed to your workspace/skills directory.",
         name, name,
     ))
 }
