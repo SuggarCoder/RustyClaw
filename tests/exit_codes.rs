@@ -6,11 +6,21 @@ use std::process::Command;
 
 /// Run rustyclaw and get exit code
 fn exit_code(args: &[&str]) -> i32 {
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--"])
-        .args(args)
-        .output()
-        .expect("Failed to execute rustyclaw");
+    // Try the built binary first (faster)
+    let binary_path = concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug/rustyclaw");
+    
+    let output = if std::path::Path::new(binary_path).exists() {
+        Command::new(binary_path)
+            .args(args)
+            .output()
+            .expect("Failed to execute rustyclaw")
+    } else {
+        Command::new("cargo")
+            .args(["run", "--bin", "rustyclaw", "--quiet", "--"])
+            .args(args)
+            .output()
+            .expect("Failed to execute rustyclaw")
+    };
 
     output.status.code().unwrap_or(-1)
 }

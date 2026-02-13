@@ -1,0 +1,20 @@
+Initialise config + workspace (runs the wizard when wizard flags are present)
+
+Usage: rustyclaw setup [OPTIONS]
+
+Options:
+  -c, --config <PATH>         Path to a config.toml file [env: RUSTYCLAW_CONFIG=]
+      --workspace <DIR>       Agent workspace directory (default: ~/.rustyclaw/workspace)
+      --settings-dir <DIR>    Settings directory (default: ~/.rustyclaw) [env: RUSTYCLAW_SETTINGS_DIR=]
+      --wizard                Run the onboarding wizard
+      --non-interactive       Run wizard without prompts
+      --profile <PROFILE>     Isolate state under ~/.rustyclaw-<PROFILE> [env: RUSTYCLAW_PROFILE=]
+      --mode <MODE>           Wizard mode [possible values: local, remote]
+      --no-color              Disable coloured terminal output [env: NO_COLOR=]
+      --remote-url <URL>      Remote gateway WebSocket URL
+      --soul <PATH>           Path to SOUL.md [env: RUSTYCLAW_SOUL=]
+      --remote-token <TOKEN>  Remote gateway token (optional)
+      --skills <DIR>          Skills directory [env: RUSTYCLAW_SKILLS=]
+      --no-secrets            Disable secrets storage
+      --gateway <WS_URL>      Gateway WebSocket URL (ws://…) [env: RUSTYCLAW_GATEWAY=]
+  -h, --help                  Print help

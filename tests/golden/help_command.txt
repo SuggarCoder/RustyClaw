@@ -1,0 +1,17 @@
+Send a one-shot message / slash-command
+
+Usage: rustyclaw command [OPTIONS] [COMMAND]...
+
+Arguments:
+  [COMMAND]...  Command text to execute
+
+Options:
+  -c, --config <PATH>       Path to a config.toml file [env: RUSTYCLAW_CONFIG=]
+      --gateway <WS_URL>    Gateway WebSocket URL (ws://…) [env: RUSTYCLAW_GATEWAY=]
+      --settings-dir <DIR>  Settings directory (default: ~/.rustyclaw) [env: RUSTYCLAW_SETTINGS_DIR=]
+      --profile <PROFILE>   Isolate state under ~/.rustyclaw-<PROFILE> [env: RUSTYCLAW_PROFILE=]
+      --no-color            Disable coloured terminal output [env: NO_COLOR=]
+      --soul <PATH>         Path to SOUL.md [env: RUSTYCLAW_SOUL=]
+      --skills <DIR>        Skills directory [env: RUSTYCLAW_SKILLS=]
+      --no-secrets          Disable secrets storage
+  -h, --help                Print help

@@ -1,0 +1,18 @@
+Health checks + quick fixes for gateway and configuration
+
+Usage: rustyclaw doctor [OPTIONS]
+
+Options:
+  -c, --config <PATH>       Path to a config.toml file [env: RUSTYCLAW_CONFIG=]
+      --yes                 Accept defaults without prompting
+      --repair              Apply recommended repairs without prompting
+      --settings-dir <DIR>  Settings directory (default: ~/.rustyclaw) [env: RUSTYCLAW_SETTINGS_DIR=]
+      --non-interactive     Run without prompts (safe migrations only)
+      --profile <PROFILE>   Isolate state under ~/.rustyclaw-<PROFILE> [env: RUSTYCLAW_PROFILE=]
+      --json                Output JSON
+      --no-color            Disable coloured terminal output [env: NO_COLOR=]
+      --soul <PATH>         Path to SOUL.md [env: RUSTYCLAW_SOUL=]
+      --skills <DIR>        Skills directory [env: RUSTYCLAW_SKILLS=]
+      --no-secrets          Disable secrets storage
+      --gateway <WS_URL>    Gateway WebSocket URL (ws://…) [env: RUSTYCLAW_GATEWAY=]
+  -h, --help                Print help

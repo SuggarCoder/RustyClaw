@@ -5,6 +5,7 @@ edition = "2024"
 authors = ["Erica Stith"]
 description = "A super-lightweight super-capable agentic tool with improved security"
 license = "MIT"
+default-run = "rustyclaw"
 
 [dependencies]
 # TUI dependencies

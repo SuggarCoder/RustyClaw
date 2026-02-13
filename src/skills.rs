@@ -167,7 +167,9 @@ impl SkillManager {
             if let Some(meta_str) = meta_val.as_str() {
                 serde_json::from_str(meta_str).unwrap_or_default()
             } else if let Some(openclaw) = meta_val.get("openclaw") {
-                serde_json::from_value(openclaw.clone()).unwrap_or_default()
+                // Convert YAML Value to JSON Value via serialization round-trip
+                let json_str = serde_json::to_string(&openclaw).unwrap_or_default();
+                serde_json::from_str(&json_str).unwrap_or_default()
             } else {
                 SkillMetadata::default()
             }

@@ -1,0 +1,19 @@
+Launch the terminal UI
+
+Usage: rustyclaw tui [OPTIONS]
+
+Options:
+  -c, --config <PATH>        Path to a config.toml file [env: RUSTYCLAW_CONFIG=]
+      --url <URL>            Gateway WebSocket URL (overrides config)
+      --settings-dir <DIR>   Settings directory (default: ~/.rustyclaw) [env: RUSTYCLAW_SETTINGS_DIR=]
+      --token <TOKEN>        Gateway token
+      --password <PASSWORD>  Gateway password
+      --profile <PROFILE>    Isolate state under ~/.rustyclaw-<PROFILE> [env: RUSTYCLAW_PROFILE=]
+      --no-color             Disable coloured terminal output [env: NO_COLOR=]
+      --session <KEY>        Session key to resume
+      --message <TEXT>       Send an initial message instead of entering interactive mode
+      --soul <PATH>          Path to SOUL.md [env: RUSTYCLAW_SOUL=]
+      --skills <DIR>         Skills directory [env: RUSTYCLAW_SKILLS=]
+      --no-secrets           Disable secrets storage
+      --gateway <WS_URL>     Gateway WebSocket URL (ws://…) [env: RUSTYCLAW_GATEWAY=]
+  -h, --help                 Print help

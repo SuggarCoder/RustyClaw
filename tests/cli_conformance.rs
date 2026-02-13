@@ -7,11 +7,22 @@ use std::process::Command;
 
 /// Helper to run rustyclaw with args and capture output
 fn run_rustyclaw(args: &[&str]) -> (String, String, i32) {
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--"])
-        .args(args)
-        .output()
-        .expect("Failed to execute rustyclaw");
+    // Try the built binary first (faster, more reliable in test context)
+    let binary_path = concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug/rustyclaw");
+    
+    let output = if std::path::Path::new(binary_path).exists() {
+        Command::new(binary_path)
+            .args(args)
+            .output()
+            .expect("Failed to execute rustyclaw binary")
+    } else {
+        // Fallback to cargo run with explicit binary
+        Command::new("cargo")
+            .args(["run", "--bin", "rustyclaw", "--quiet", "--"])
+            .args(args)
+            .output()
+            .expect("Failed to execute cargo run")
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
