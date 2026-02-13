@@ -1328,11 +1328,15 @@ async fn exec_gw_skill_search(
         } else {
             format!(" (needs: {})", r.required_secrets.join(", "))
         };
+        // Use display_name if available, otherwise name
+        let display = if r.display_name.is_empty() { &r.name } else { &r.display_name };
+        let version_str = if r.version.is_empty() { "latest".to_string() } else { format!("v{}", r.version) };
         lines.push(format!(
-            "  • {} v{} by {} — {}{}\n",
-            r.name, r.version, r.author, r.description, secrets_note,
+            "  • {} ({}) {} — {}{}\n",
+            display, r.name, version_str, r.description, secrets_note,
         ));
     }
+    lines.push("\nTo install: clawhub install <skill-name>".to_string());
     Ok(lines.join(""))
 }
 

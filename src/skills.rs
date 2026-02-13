@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 // ── ClawHub constants ───────────────────────────────────────────────────────
 
 /// Default ClawHub registry URL.
-pub const DEFAULT_REGISTRY_URL: &str = "https://registry.clawhub.dev/api/v1";
+pub const DEFAULT_REGISTRY_URL: &str = "https://clawhub.com";
 
 // ── Skill types ─────────────────────────────────────────────────────────────
 
@@ -133,9 +133,18 @@ pub struct SkillManifest {
 /// A single entry returned by a registry search.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
+    /// Skill slug (used for installation)
+    #[serde(alias = "slug")]
     pub name: String,
+    #[serde(default)]
     pub version: String,
+    /// Description text
+    #[serde(alias = "summary")]
     pub description: String,
+    /// Display name (optional)
+    #[serde(rename = "displayName", default)]
+    pub display_name: String,
+    #[serde(default)]
     pub author: String,
     #[serde(default)]
     pub downloads: u64,
@@ -146,6 +155,10 @@ pub struct RegistryEntry {
 /// Response wrapper from the ClawHub API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RegistrySearchResponse {
+    /// ClawHub uses "results" array
+    #[serde(default)]
+    results: Vec<RegistryEntry>,
+    /// Legacy field (keep for compatibility)
     #[serde(default)]
     skills: Vec<RegistryEntry>,
     #[serde(default)]
@@ -657,6 +670,7 @@ impl SkillManager {
             })
             .map(|s| RegistryEntry {
                 name: s.name.clone(),
+                display_name: String::new(),
                 version: match &s.source {
                     SkillSource::Registry { version, .. } => version.clone(),
                     SkillSource::Local => "local".to_string(),
@@ -673,8 +687,9 @@ impl SkillManager {
 
     /// Internal: attempt a remote registry search.
     fn search_registry_remote(&self, query: &str) -> Result<Vec<RegistryEntry>> {
+        // ClawHub API: /api/search?q=<query>
         let url = format!(
-            "{}/skills/search?q={}",
+            "{}/api/search?q={}",
             self.registry_url,
             urlencoding::encode(query),
         );
@@ -699,7 +714,15 @@ impl SkillManager {
         }
 
         let body: RegistrySearchResponse = resp.json().context("Failed to parse registry response")?;
-        Ok(body.skills)
+        
+        // ClawHub returns "results", legacy might return "skills"
+        let entries = if !body.results.is_empty() {
+            body.results
+        } else {
+            body.skills
+        };
+        
+        Ok(entries)
     }
 
     /// Install a skill from the ClawHub registry into the primary
