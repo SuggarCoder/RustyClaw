@@ -66,7 +66,8 @@ async-trait = "0.1"
 clap = { version = "4.5", features = ["derive", "env"] }
 futures-util = "0.3"
 tokio-tungstenite = "0.28"
-reqwest = { version = "0.13", features = ["json", "rustls-tls", "stream", "blocking"], default-features = false }
+# Note: 0.13+ renamed rustls-tls to rustls
+reqwest = { version = "0.13", features = ["json", "rustls", "stream", "blocking"], default-features = false }
 url = "2.5"
 tui-input = "0.15"
 strum = { version = "0.27", features = ["derive"] }
@@ -89,7 +90,8 @@ zip = "7.4.0"
 httpdate = "1.0"
 
 # Matrix messenger support (optional)
-matrix-sdk = { version = "0.10", default-features = false, features = ["e2e-encryption", "sqlite", "rustls-tls"], optional = true }
+# Features: e2e-encryption (default), sqlite (persistence), rustls-tls (TLS)
+matrix-sdk = { version = "0.10", default-features = false, features = ["e2e-encryption", "sqlite"], optional = true }
 
 # Signal messenger support (optional)
 presage = { git = "https://github.com/whisperfish/presage", optional = true }
