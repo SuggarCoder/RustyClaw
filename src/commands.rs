@@ -297,11 +297,21 @@ fn handle_skill_subcommand(parts: &[&str], context: &mut CommandContext<'_>) -> 
                             action: CommandAction::None,
                         }
                     } else {
-                        let mut msgs: Vec<String> = vec![format!(
-                            "{} result(s) for '{}':",
-                            results.len(),
-                            query,
-                        )];
+                        let has_local = results.iter().any(|r| r.version == "local");
+                        let header = if has_local {
+                            format!(
+                                "{} local skill(s) matching '{}' (registry offline):",
+                                results.len(),
+                                query,
+                            )
+                        } else {
+                            format!(
+                                "{} result(s) for '{}':",
+                                results.len(),
+                                query,
+                            )
+                        };
+                        let mut msgs: Vec<String> = vec![header];
                         for r in &results {
                             msgs.push(format!(
                                 "  • {} v{} by {} — {}",

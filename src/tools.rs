@@ -1985,7 +1985,7 @@ fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String, St
         .get("timeout_secs")
         .and_then(|v| v.as_u64())
         .unwrap_or(30);
-    
+
     // Background execution support
     let background = args
         .get("background")
@@ -2018,9 +2018,9 @@ fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String, St
         let mut mgr = manager
             .lock()
             .map_err(|_| "Failed to acquire process manager lock".to_string())?;
-        
+
         let session_id = mgr.spawn(command, cwd.to_string_lossy().as_ref(), Some(timeout_secs))?;
-        
+
         return Ok(json!({
             "status": "running",
             "sessionId": session_id,
@@ -2041,13 +2041,13 @@ fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String, St
     // Poll for completion with yield/timeout logic
     let yield_deadline = Instant::now() + Duration::from_millis(yield_ms);
     let timeout_deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    
+
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break, // Process finished
             Ok(None) => {
                 let now = Instant::now();
-                
+
                 // Check if we should auto-background
                 if now >= yield_deadline && yield_ms > 0 {
                     // Move to background - transfer child to process manager
@@ -2055,7 +2055,7 @@ fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String, St
                     let mut mgr = manager
                         .lock()
                         .map_err(|_| "Failed to acquire process manager lock".to_string())?;
-                    
+
                     // Create a session from the existing child
                     let remaining_timeout = timeout_deadline.saturating_duration_since(now);
                     let mut session = crate::process_manager::ExecSession::new(
@@ -2064,13 +2064,13 @@ fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String, St
                         Some(remaining_timeout),
                         child,
                     );
-                    
+
                     // Try to read any output accumulated so far
                     session.try_read_output();
-                    
+
                     // Insert session into manager
                     let session_id = mgr.insert(session);
-                    
+
                     return Ok(json!({
                         "status": "running",
                         "sessionId": session_id,
@@ -2081,7 +2081,7 @@ fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String, St
                         )
                     }).to_string());
                 }
-                
+
                 // Check timeout
                 if now >= timeout_deadline {
                     let _ = child.kill();
@@ -2090,7 +2090,7 @@ fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String, St
                         timeout_secs
                     ));
                 }
-                
+
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => return Err(format!("Error waiting for command: {}", e)),
@@ -2459,7 +2459,7 @@ fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
         "list" => {
             // Poll all sessions first to update status
             mgr.poll_all();
-            
+
             let sessions = mgr.list();
             if sessions.is_empty() {
                 return Ok("No active sessions.".to_string());
@@ -2484,7 +2484,7 @@ fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
 
         "poll" => {
             let id = session_id.ok_or("Missing sessionId for poll action")?;
-            
+
             let session = mgr
                 .get_mut(id)
                 .ok_or_else(|| format!("No session found: {}", id))?;
@@ -2509,7 +2509,7 @@ fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
                 }
                 result.push('\n');
             }
-            
+
             if exited {
                 result.push_str(&format!("Process {}.", status_str));
             } else {
@@ -2521,7 +2521,7 @@ fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
 
         "log" => {
             let id = session_id.ok_or("Missing sessionId for log action")?;
-            
+
             let session = mgr
                 .get_mut(id)
                 .ok_or_else(|| format!("No session found: {}", id))?;
@@ -2577,7 +2577,7 @@ fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
 
         "remove" => {
             let id = session_id.ok_or("Missing sessionId for remove action")?;
-            
+
             if let Some(mut session) = mgr.remove(id) {
                 // Kill if still running
                 if session.status == SessionStatus::Running {
@@ -2681,7 +2681,7 @@ fn exec_memory_get(args: &Value, workspace_dir: &Path) -> Result<String, String>
 /// Cron job management.
 fn exec_cron(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     use crate::cron::*;
-    
+
     let action = args
         .get("action")
         .and_then(|v| v.as_str())
@@ -3032,9 +3032,9 @@ fn exec_session_status(args: &Value, _workspace_dir: &Path) -> Result<String, St
 fn exec_agents_list(_args: &Value, workspace_dir: &Path) -> Result<String, String> {
     // In a full implementation, this would read from config
     // For now, return a simple list based on workspace structure
-    
+
     let mut agents = vec!["main".to_string()];
-    
+
     // Check for agents directory
     let agents_dir = workspace_dir.join("agents");
     if agents_dir.exists() && agents_dir.is_dir() {
@@ -3050,12 +3050,12 @@ fn exec_agents_list(_args: &Value, workspace_dir: &Path) -> Result<String, Strin
             }
         }
     }
-    
+
     let mut output = String::from("Available agents for sessions_spawn:\n\n");
     for agent in &agents {
         output.push_str(&format!("- {}\n", agent));
     }
-    
+
     Ok(output)
 }
 
@@ -3071,13 +3071,13 @@ fn exec_apply_patch(args: &Value, workspace_dir: &Path) -> Result<String, String
 
     // Parse the patch
     let hunks = parse_unified_diff(patch_content)?;
-    
+
     if hunks.is_empty() {
         return Err("No valid hunks found in patch".to_string());
     }
 
     let mut results = Vec::new();
-    
+
     // Group hunks by file
     let mut files: std::collections::HashMap<String, Vec<&DiffHunk>> = std::collections::HashMap::new();
     for hunk in &hunks {
@@ -3087,7 +3087,7 @@ fn exec_apply_patch(args: &Value, workspace_dir: &Path) -> Result<String, String
 
     for (file_path, file_hunks) in files {
         let full_path = resolve_path(workspace_dir, &file_path);
-        
+
         // Read current content
         let content = if full_path.exists() {
             std::fs::read_to_string(&full_path)
@@ -3097,17 +3097,17 @@ fn exec_apply_patch(args: &Value, workspace_dir: &Path) -> Result<String, String
         };
 
         let mut lines: Vec<String> = content.lines().map(String::from).collect();
-        
+
         // Apply hunks in reverse order (to preserve line numbers)
         let mut sorted_hunks: Vec<_> = file_hunks.iter().collect();
         sorted_hunks.sort_by(|a, b| b.old_start.cmp(&a.old_start));
-        
+
         for hunk in sorted_hunks {
             lines = apply_hunk(&lines, hunk)?;
         }
-        
+
         let new_content = lines.join("\n");
-        
+
         if dry_run {
             results.push(format!("✓ {} (dry run, {} hunks valid)", file_path, file_hunks.len()));
         } else {
@@ -3116,10 +3116,10 @@ fn exec_apply_patch(args: &Value, workspace_dir: &Path) -> Result<String, String
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create directory: {}", e))?;
             }
-            
+
             std::fs::write(&full_path, new_content)
                 .map_err(|e| format!("Failed to write {}: {}", file_path, e))?;
-            
+
             results.push(format!("✓ {} ({} hunks applied)", file_path, file_hunks.len()));
         }
     }
@@ -3150,14 +3150,14 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<DiffHunk>, String> {
     let mut hunks = Vec::new();
     let mut current_file: Option<String> = None;
     let mut lines = patch.lines().peekable();
-    
+
     while let Some(line) = lines.next() {
         // Parse file header
         if line.starts_with("--- ") {
             // Skip, we use +++ line
             continue;
         }
-        
+
         if line.starts_with("+++ ") {
             let path = line[4..].trim();
             // Strip a/ or b/ prefix if present
@@ -3166,24 +3166,24 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<DiffHunk>, String> {
             current_file = Some(path.to_string());
             continue;
         }
-        
+
         // Parse hunk header: @@ -old_start,old_count +new_start,new_count @@
         if line.starts_with("@@ ") {
             let Some(ref file_path) = current_file else {
                 return Err("Hunk without file header".to_string());
             };
-            
+
             let header = &line[3..];
             let end = header.find(" @@").unwrap_or(header.len());
             let range_part = &header[..end];
-            
+
             let (old_range, new_range) = range_part
                 .split_once(' ')
                 .ok_or("Invalid hunk header")?;
-            
+
             let (old_start, old_count) = parse_range(old_range.trim_start_matches('-'))?;
             let (new_start, new_count) = parse_range(new_range.trim_start_matches('+'))?;
-            
+
             // Read hunk lines
             let mut hunk_lines = Vec::new();
             while let Some(next_line) = lines.peek() {
@@ -3199,7 +3199,7 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<DiffHunk>, String> {
                     hunk_lines.push(DiffLine::Add(line.get(1..).unwrap_or("").to_string()));
                 }
             }
-            
+
             hunks.push(DiffHunk {
                 file_path: file_path.clone(),
                 old_start,
@@ -3210,7 +3210,7 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<DiffHunk>, String> {
             });
         }
     }
-    
+
     Ok(hunks)
 }
 
@@ -3230,10 +3230,10 @@ fn parse_range(s: &str) -> Result<(usize, usize), String> {
 fn apply_hunk(lines: &[String], hunk: &DiffHunk) -> Result<Vec<String>, String> {
     let mut result = Vec::new();
     let start_idx = hunk.old_start.saturating_sub(1); // 1-indexed to 0-indexed
-    
+
     // Copy lines before the hunk
     result.extend(lines.iter().take(start_idx).cloned());
-    
+
     // Apply the hunk
     let mut old_idx = start_idx;
     for diff_line in &hunk.lines {
@@ -3266,10 +3266,10 @@ fn apply_hunk(lines: &[String], hunk: &DiffHunk) -> Result<Vec<String>, String> 
             }
         }
     }
-    
+
     // Copy remaining lines after the hunk
     result.extend(lines.iter().skip(old_idx).cloned());
-    
+
     Ok(result)
 }
 
@@ -3291,7 +3291,7 @@ fn exec_gateway(args: &Value, workspace_dir: &Path) -> Result<String, String> {
                 .get("reason")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Restart requested via gateway tool");
-            
+
             Ok(format!(
                 "Gateway restart requested.\nReason: {}\nNote: Actual restart requires daemon integration.",
                 reason
@@ -3309,9 +3309,9 @@ fn exec_gateway(args: &Value, workspace_dir: &Path) -> Result<String, String> {
 
             let content = std::fs::read_to_string(&config_path)
                 .map_err(|e| format!("Failed to read config: {}", e))?;
-            
+
             let hash = format!("{:x}", content.len() * 31 + content.bytes().map(|b| b as usize).sum::<usize>());
-            
+
             Ok(serde_json::json!({
                 "config": content,
                 "hash": hash,
@@ -3346,7 +3346,7 @@ fn exec_gateway(args: &Value, workspace_dir: &Path) -> Result<String, String> {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("Failed to create config directory: {}", e))?;
             }
-            
+
             std::fs::write(&config_path, raw)
                 .map_err(|e| format!("Failed to write config: {}", e))?;
 
@@ -3514,21 +3514,21 @@ fn exec_image(args: &Value, workspace_dir: &Path) -> Result<String, String> {
 
     // Check if it's a URL or local path
     let is_url = image_path.starts_with("http://") || image_path.starts_with("https://");
-    
+
     if !is_url {
         // Resolve local path
         let full_path = resolve_path(workspace_dir, image_path);
         if !full_path.exists() {
             return Err(format!("Image file not found: {}", image_path));
         }
-        
+
         // Check it's actually an image
         let ext = full_path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-        
+
         let valid_exts = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"];
         if !valid_exts.contains(&ext.as_str()) {
             return Err(format!(
@@ -3543,7 +3543,7 @@ fn exec_image(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     // 1. Load the image (from file or URL)
     // 2. Send to configured vision model (GPT-4V, Claude, Gemini, etc.)
     // 3. Return the model's response
-    
+
     Ok(format!(
         "Image analysis requested:\n- Image: {}\n- Prompt: {}\n- Is URL: {}\n\nNote: Actual image analysis requires vision model integration (GPT-4V, Claude 3, Gemini Pro Vision, etc.).",
         image_path,
@@ -3599,7 +3599,7 @@ fn exec_nodes(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
             let node_id = node.ok_or("Missing 'node' parameter for notify action")?;
             let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("Notification");
             let body = args.get("body").and_then(|v| v.as_str()).unwrap_or("");
-            
+
             Ok(format!(
                 "Notification queued:\n- Node: {}\n- Title: {}\n- Body: {}\n\nNote: Requires node connection.",
                 node_id, title, body
@@ -3609,7 +3609,7 @@ fn exec_nodes(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
         "camera_snap" => {
             let node_id = node.ok_or("Missing 'node' parameter for camera_snap")?;
             let facing = args.get("facing").and_then(|v| v.as_str()).unwrap_or("back");
-            
+
             Ok(format!(
                 "Camera snapshot requested:\n- Node: {}\n- Facing: {}\n\nNote: Requires paired node with camera access.",
                 node_id, facing
@@ -3647,11 +3647,11 @@ fn exec_nodes(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
                 .unwrap_or_default();
-            
+
             if command.is_empty() {
                 return Err("Missing 'command' array for run action".to_string());
             }
-            
+
             Ok(format!(
                 "Remote command requested:\n- Node: {}\n- Command: {}\n\nNote: Requires paired node host.",
                 node_id,
@@ -3665,7 +3665,7 @@ fn exec_nodes(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
                 .get("invokeCommand")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing 'invokeCommand' for invoke action")?;
-            
+
             Ok(format!(
                 "Node invoke requested:\n- Node: {}\n- Command: {}\n\nNote: Requires paired node.",
                 node_id, invoke_cmd
@@ -3815,7 +3815,7 @@ fn exec_canvas(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
                 .ok_or("Missing 'url' for present action")?;
             let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(800);
             let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(600);
-            
+
             Ok(format!(
                 "Would present canvas:\n- URL: {}\n- Size: {}x{}\n- Node: {}\n\nNote: Requires canvas integration.",
                 url, width, height, node.unwrap_or("default")
@@ -3885,12 +3885,12 @@ fn params_to_json_schema(params: &[ToolParam]) -> (Value, Value) {
         let mut prop = serde_json::Map::new();
         prop.insert("type".into(), json!(p.param_type));
         prop.insert("description".into(), json!(p.description));
-        
+
         // Arrays need an items schema
         if p.param_type == "array" {
             prop.insert("items".into(), json!({"type": "string"}));
         }
-        
+
         properties.insert(p.name.clone(), Value::Object(prop));
         if p.required {
             required.push(json!(p.name));

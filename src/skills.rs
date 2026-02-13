@@ -601,8 +601,61 @@ impl SkillManager {
 
     // ── ClawHub registry operations ─────────────────────────────────
 
+    /// Try to reach the registry with a short timeout.  Returns `true`
+    /// if the base URL responds, `false` on any network error.
+    fn registry_reachable(&self) -> bool {
+        let client = reqwest::blocking::Client::new();
+        client
+            .head(&self.registry_url)
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .is_ok()
+    }
+
     /// Search the ClawHub registry for skills matching a query.
+    ///
+    /// If the registry is unreachable, falls back to matching against
+    /// locally-loaded skills so the user still gets useful results.
     pub fn search_registry(&self, query: &str) -> Result<Vec<RegistryEntry>> {
+        // ── Try remote registry first ───────────────────────────
+        match self.search_registry_remote(query) {
+            Ok(results) => return Ok(results),
+            Err(_) => {
+                // Fall through to local search.
+            }
+        }
+
+        // ── Fallback: search locally loaded skills ──────────────
+        let q_lower = query.to_lowercase();
+        let local_results: Vec<RegistryEntry> = self
+            .skills
+            .iter()
+            .filter(|s| {
+                s.name.to_lowercase().contains(&q_lower)
+                    || s.description
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(&q_lower)
+            })
+            .map(|s| RegistryEntry {
+                name: s.name.clone(),
+                version: match &s.source {
+                    SkillSource::Registry { version, .. } => version.clone(),
+                    SkillSource::Local => "local".to_string(),
+                },
+                description: s.description.clone().unwrap_or_default(),
+                author: String::new(),
+                downloads: 0,
+                required_secrets: s.linked_secrets.clone(),
+            })
+            .collect();
+
+        Ok(local_results)
+    }
+
+    /// Internal: attempt a remote registry search.
+    fn search_registry_remote(&self, query: &str) -> Result<Vec<RegistryEntry>> {
         let url = format!(
             "{}/skills/search?q={}",
             self.registry_url,
@@ -616,9 +669,9 @@ impl SkillManager {
         }
 
         let resp = req
-            .timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(5))
             .send()
-            .context("Failed to contact ClawHub registry")?;
+            .context("ClawHub registry is not reachable")?;
 
         if !resp.status().is_success() {
             anyhow::bail!(
@@ -635,6 +688,15 @@ impl SkillManager {
     /// Install a skill from the ClawHub registry into the primary
     /// skills directory.  Returns the installed `Skill`.
     pub fn install_from_registry(&mut self, name: &str, version: Option<&str>) -> Result<Skill> {
+        if !self.registry_reachable() {
+            anyhow::bail!(
+                "ClawHub registry ({}) is not reachable. \
+                 Check your internet connection or set a custom registry URL \
+                 with `clawhub_url` in your config.",
+                self.registry_url,
+            );
+        }
+
         let ver = version.unwrap_or("latest");
         let url = format!("{}/skills/{}/{}", self.registry_url, name, ver);
 
@@ -647,7 +709,7 @@ impl SkillManager {
         let resp = req
             .timeout(std::time::Duration::from_secs(30))
             .send()
-            .context("Failed to contact ClawHub registry")?;
+            .context("Failed to download skill from ClawHub")?;
 
         if !resp.status().is_success() {
             anyhow::bail!(
@@ -737,6 +799,15 @@ impl SkillManager {
             "skill_md": content,
         });
 
+        if !self.registry_reachable() {
+            anyhow::bail!(
+                "ClawHub registry ({}) is not reachable. \
+                 Check your internet connection or set a custom registry URL \
+                 with `clawhub_url` in your config.",
+                self.registry_url,
+            );
+        }
+
         let url = format!("{}/skills/publish", self.registry_url);
         let client = reqwest::blocking::Client::new();
         let resp = client
@@ -745,7 +816,7 @@ impl SkillManager {
             .json(&payload)
             .timeout(std::time::Duration::from_secs(30))
             .send()
-            .context("Failed to contact ClawHub registry")?;
+            .context("Failed to publish to ClawHub")?;
 
         if !resp.status().is_success() {
             anyhow::bail!(
@@ -792,7 +863,7 @@ fn base64_decode(input: &str) -> Result<Vec<u8>> {
 /// Parse YAML frontmatter from a markdown file
 fn parse_frontmatter(content: &str) -> Result<(serde_yaml::Value, String)> {
     let content = content.trim_start();
-    
+
     if !content.starts_with("---") {
         // No frontmatter, treat entire content as instructions
         return Ok((serde_yaml::Value::Mapping(Default::default()), content.to_string()));
@@ -803,10 +874,10 @@ fn parse_frontmatter(content: &str) -> Result<(serde_yaml::Value, String)> {
     if let Some(end_idx) = after_first.find("\n---") {
         let frontmatter_str = &after_first[..end_idx];
         let instructions = after_first[end_idx + 4..].trim_start().to_string();
-        
+
         let frontmatter: serde_yaml::Value = serde_yaml::from_str(frontmatter_str)
             .context("Failed to parse YAML frontmatter")?;
-        
+
         Ok((frontmatter, instructions))
     } else {
         // No closing ---, treat as no frontmatter
