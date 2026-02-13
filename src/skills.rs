@@ -162,24 +162,6 @@ struct RegistrySearchResponse {
     total: usize,
 }
 
-/// Response when fetching a single skill package from ClawHub.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RegistryPackageResponse {
-    /// Skill name.
-    name: String,
-    /// Version being returned.
-    version: String,
-    /// Tar archive (base64-encoded) containing the skill directory.
-    #[serde(default)]
-    archive_b64: Option<String>,
-    /// Alternatively, the raw SKILL.md content for lightweight packages.
-    #[serde(default)]
-    skill_md: Option<String>,
-    /// Required secrets.
-    #[serde(default)]
-    required_secrets: Vec<String>,
-}
-
 // ── Skill manager ───────────────────────────────────────────────────────────
 
 /// Manages skills compatible with OpenClaw
@@ -486,7 +468,7 @@ impl SkillManager {
     /// Generate prompt context for all eligible skills
     pub fn generate_prompt_context(&self) -> String {
         let eligible = self.get_eligible_skills();
-        
+
         let mut context = String::from("## Skills (mandatory)\n\n");
         context.push_str("Before replying: scan <available_skills> <description> entries.\n");
         context.push_str("- If exactly one skill clearly applies: read its SKILL.md at <location> with `read_file`, then follow it.\n");
@@ -496,7 +478,7 @@ impl SkillManager {
         context.push_str("The following skills provide specialized instructions for specific tasks.\n");
         context.push_str("Use the read_file tool to load a skill's file when the task matches its description.\n");
         context.push_str("When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n");
-        
+
         if eligible.is_empty() {
             context.push_str("No skills are currently loaded.\n\n");
             context.push_str("To find and install skills:\n");
@@ -518,11 +500,11 @@ impl SkillManager {
         }
 
         context.push_str("</available_skills>\n\n");
-        
+
         // Add note about ClawHub for finding more skills
         context.push_str("To find more skills: https://clawhub.com\n");
         context.push_str("To install a skill: `clawhub install <skill-name>` (requires npm i -g clawhub)\n");
-        
+
         context
     }
 
@@ -713,14 +695,14 @@ impl SkillManager {
         }
 
         let body: RegistrySearchResponse = resp.json().context("Failed to parse registry response")?;
-        
+
         // ClawHub returns "results", legacy might return "skills"
         let entries = if !body.results.is_empty() {
             body.results
         } else {
             body.skills
         };
-        
+
         Ok(entries)
     }
 
@@ -763,7 +745,7 @@ impl SkillManager {
 
         // Response is a zip file
         let zip_bytes = resp.bytes().context("Failed to read zip data")?;
-        
+
         // Use last directory (user's writable dir) for installations, not first (bundled/read-only)
         let skills_dir = self
             .skills_dirs
@@ -777,11 +759,11 @@ impl SkillManager {
         // Extract zip to skill directory
         let cursor = std::io::Cursor::new(zip_bytes);
         let mut archive = zip::ZipArchive::new(cursor).context("Invalid zip archive")?;
-        
+
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
             let outpath = skill_dir.join(file.name());
-            
+
             if file.name().ends_with('/') {
                 std::fs::create_dir_all(&outpath)?;
             } else {
@@ -889,33 +871,6 @@ impl SkillManager {
             manifest.name, manifest.version, self.registry_url,
         ))
     }
-}
-
-/// Minimal base64 decoder (no padding required).
-fn base64_decode(input: &str) -> Result<Vec<u8>> {
-    // Use a simple lookup — avoids pulling in a crate.
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::with_capacity(input.len() * 3 / 4);
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-    for &b in input.as_bytes() {
-        if b == b'=' || b == b'\n' || b == b'\r' {
-            continue;
-        }
-        let val = TABLE
-            .iter()
-            .position(|&c| c == b)
-            .ok_or_else(|| anyhow::anyhow!("Invalid base64 character: {}", b as char))?
-            as u32;
-        buf = (buf << 6) | val;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-    Ok(out)
 }
 
 /// Parse YAML frontmatter from a markdown file
