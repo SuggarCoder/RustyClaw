@@ -23,7 +23,8 @@ mod vault;
 use std::path::PathBuf;
 
 pub use types::{
-    AccessContext, AccessPolicy, CredentialValue, Secret, SecretEntry, SecretKind,
+    AccessContext, AccessPolicy, BrowserStore, Cookie, CredentialValue, Secret, SecretEntry,
+    SecretKind, WebStorage,
 };
 
 /// Secrets manager backed by an encrypted SecureStore vault.

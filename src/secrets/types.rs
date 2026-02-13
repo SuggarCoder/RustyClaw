@@ -183,3 +183,301 @@ pub struct Secret {
     pub key: String,
     pub description: Option<String>,
 }
+
+// ── Browser-style credential storage ────────────────────────────────────────
+
+/// An HTTP cookie with standard browser attributes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cookie {
+    /// Cookie name.
+    pub name: String,
+    /// Cookie value.
+    pub value: String,
+    /// Domain the cookie is valid for (e.g. ".github.com" for subdomains).
+    pub domain: String,
+    /// Path the cookie is valid for (default "/").
+    #[serde(default = "default_path")]
+    pub path: String,
+    /// Expiration timestamp (Unix seconds). None = session cookie (but we persist anyway).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<i64>,
+    /// Cookie should only be sent over HTTPS.
+    #[serde(default)]
+    pub secure: bool,
+    /// Cookie should not be accessible to JavaScript (browser enforcement).
+    /// For agents, this is informational — we still allow access but tools
+    /// should respect it when simulating browser behavior.
+    #[serde(default)]
+    pub http_only: bool,
+    /// SameSite attribute: "strict", "lax", or "none".
+    #[serde(default = "default_same_site")]
+    pub same_site: String,
+}
+
+fn default_path() -> String {
+    "/".to_string()
+}
+
+fn default_same_site() -> String {
+    "lax".to_string()
+}
+
+impl Cookie {
+    /// Create a simple cookie with defaults.
+    pub fn new(name: impl Into<String>, value: impl Into<String>, domain: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+            domain: domain.into(),
+            path: "/".to_string(),
+            expires: None,
+            secure: false,
+            http_only: false,
+            same_site: "lax".to_string(),
+        }
+    }
+
+    /// Check if this cookie is valid for a given domain.
+    /// Implements standard domain matching:
+    /// - Exact match: "example.com" matches "example.com"
+    /// - Subdomain match: ".example.com" matches "sub.example.com"
+    pub fn matches_domain(&self, request_domain: &str) -> bool {
+        let cookie_domain = self.domain.to_lowercase();
+        let req_domain = request_domain.to_lowercase();
+
+        if cookie_domain.starts_with('.') {
+            // Subdomain matching: .example.com matches foo.example.com
+            let suffix = &cookie_domain[1..];
+            req_domain == suffix || req_domain.ends_with(&format!(".{}", suffix))
+        } else {
+            // Exact match only
+            req_domain == cookie_domain
+        }
+    }
+
+    /// Check if this cookie is valid for a given path.
+    pub fn matches_path(&self, request_path: &str) -> bool {
+        request_path.starts_with(&self.path)
+            || (self.path.ends_with('/') && request_path.starts_with(self.path.trim_end_matches('/')))
+    }
+
+    /// Check if the cookie has expired.
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires) = self.expires {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            expires < now
+        } else {
+            false // No expiry = persistent (we don't do session cookies)
+        }
+    }
+
+    /// Format as a Set-Cookie header value.
+    pub fn to_set_cookie_header(&self) -> String {
+        let mut parts = vec![format!("{}={}", self.name, self.value)];
+        parts.push(format!("Domain={}", self.domain));
+        parts.push(format!("Path={}", self.path));
+        if let Some(exp) = self.expires {
+            // Format as HTTP date would be better, but Unix timestamp works for storage
+            parts.push(format!("Max-Age={}", exp));
+        }
+        if self.secure {
+            parts.push("Secure".to_string());
+        }
+        if self.http_only {
+            parts.push("HttpOnly".to_string());
+        }
+        parts.push(format!("SameSite={}", self.same_site));
+        parts.join("; ")
+    }
+
+    /// Format as a Cookie header value (just name=value).
+    pub fn to_cookie_header(&self) -> String {
+        format!("{}={}", self.name, self.value)
+    }
+}
+
+/// Origin-scoped storage (like browser localStorage).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WebStorage {
+    /// The origin this storage belongs to (e.g. "https://github.com").
+    pub origin: String,
+    /// Key-value pairs.
+    pub data: BTreeMap<String, String>,
+}
+
+impl WebStorage {
+    pub fn new(origin: impl Into<String>) -> Self {
+        Self {
+            origin: origin.into(),
+            data: BTreeMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&String> {
+        self.data.get(key)
+    }
+
+    pub fn set(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.data.insert(key.into(), value.into());
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<String> {
+        self.data.remove(key)
+    }
+
+    pub fn clear(&mut self) {
+        self.data.clear();
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.data.keys()
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+/// Container for all browser-style credentials.
+/// Stored as a single encrypted blob in the vault under key "browser_store".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BrowserStore {
+    /// Cookies indexed by domain (normalized to lowercase).
+    /// Each domain has a vec of cookies.
+    pub cookies: BTreeMap<String, Vec<Cookie>>,
+    /// Origin-scoped storage (localStorage equivalent).
+    pub storage: BTreeMap<String, WebStorage>,
+}
+
+impl BrowserStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    // ── Cookie operations ────────────────────────────────────────────
+
+    /// Get all non-expired cookies that match a domain and path.
+    pub fn get_cookies(&self, domain: &str, path: &str) -> Vec<&Cookie> {
+        let domain_lower = domain.to_lowercase();
+        let mut result = Vec::new();
+
+        for (stored_domain, cookies) in &self.cookies {
+            for cookie in cookies {
+                if !cookie.is_expired()
+                    && cookie.matches_domain(&domain_lower)
+                    && cookie.matches_path(path)
+                {
+                    result.push(cookie);
+                }
+            }
+            // Also check if the stored domain itself matches
+            if stored_domain != &cookie.domain.to_lowercase() {
+                // Already checked via cookie.matches_domain
+            }
+        }
+
+        result
+    }
+
+    /// Get a specific cookie by name for a domain.
+    pub fn get_cookie(&self, domain: &str, name: &str) -> Option<&Cookie> {
+        self.get_cookies(domain, "/")
+            .into_iter()
+            .find(|c| c.name == name)
+    }
+
+    /// Set a cookie (replaces existing cookie with same name/domain/path).
+    pub fn set_cookie(&mut self, cookie: Cookie) {
+        let domain_key = cookie.domain.to_lowercase().trim_start_matches('.').to_string();
+        let cookies = self.cookies.entry(domain_key).or_default();
+
+        // Remove existing cookie with same name and path
+        cookies.retain(|c| !(c.name == cookie.name && c.path == cookie.path));
+
+        // Don't add if already expired
+        if !cookie.is_expired() {
+            cookies.push(cookie);
+        }
+    }
+
+    /// Remove a specific cookie.
+    pub fn remove_cookie(&mut self, domain: &str, name: &str, path: &str) {
+        let domain_key = domain.to_lowercase().trim_start_matches('.').to_string();
+        if let Some(cookies) = self.cookies.get_mut(&domain_key) {
+            cookies.retain(|c| !(c.name == name && c.path == path));
+        }
+    }
+
+    /// Clear all cookies for a domain.
+    pub fn clear_cookies(&mut self, domain: &str) {
+        let domain_key = domain.to_lowercase().trim_start_matches('.').to_string();
+        self.cookies.remove(&domain_key);
+    }
+
+    /// Remove all expired cookies.
+    pub fn purge_expired(&mut self) {
+        for cookies in self.cookies.values_mut() {
+            cookies.retain(|c| !c.is_expired());
+        }
+        // Remove empty domain entries
+        self.cookies.retain(|_, v| !v.is_empty());
+    }
+
+    /// Build a Cookie header string for a request to a given URL.
+    pub fn cookie_header(&self, domain: &str, path: &str, is_secure: bool) -> Option<String> {
+        let cookies: Vec<_> = self
+            .get_cookies(domain, path)
+            .into_iter()
+            .filter(|c| !c.secure || is_secure) // Only send Secure cookies over HTTPS
+            .collect();
+
+        if cookies.is_empty() {
+            None
+        } else {
+            Some(
+                cookies
+                    .iter()
+                    .map(|c| c.to_cookie_header())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        }
+    }
+
+    /// List all domains that have cookies.
+    pub fn cookie_domains(&self) -> Vec<&String> {
+        self.cookies.keys().collect()
+    }
+
+    // ── Storage operations ───────────────────────────────────────────
+
+    /// Get storage for an origin, creating if needed.
+    pub fn storage_mut(&mut self, origin: &str) -> &mut WebStorage {
+        let origin_key = origin.to_lowercase();
+        self.storage
+            .entry(origin_key.clone())
+            .or_insert_with(|| WebStorage::new(origin_key))
+    }
+
+    /// Get storage for an origin (read-only).
+    pub fn storage(&self, origin: &str) -> Option<&WebStorage> {
+        self.storage.get(&origin.to_lowercase())
+    }
+
+    /// Clear storage for an origin.
+    pub fn clear_storage(&mut self, origin: &str) {
+        self.storage.remove(&origin.to_lowercase());
+    }
+
+    /// List all origins that have storage.
+    pub fn storage_origins(&self) -> Vec<&String> {
+        self.storage.keys().collect()
+    }
+}

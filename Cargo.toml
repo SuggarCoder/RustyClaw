@@ -79,6 +79,9 @@ urlencoding = "2.1"
 chrono = "0.4"
 zip = "7.3.0"
 
+# HTTP date parsing (for Set-Cookie expires)
+httpdate = "1.0"
+
 # Unix process management
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
