@@ -322,7 +322,7 @@ impl App {
 
         // Load persisted conversation history (if any).
         let history_path = Self::history_path(&config);
-        let conversation_history = Self::load_history(&history_path, &soul_manager);
+        let conversation_history = Self::load_history(&history_path, &soul_manager, &skill_manager);
 
         // Replay previous conversation turns into the display messages
         // so the user can see their past context.
@@ -1613,19 +1613,39 @@ impl App {
     }
 
     /// Build the system prompt from SOUL.md.
-    fn system_message(soul: &SoulManager) -> Option<ChatMessage> {
-        soul.get_content().map(|text| ChatMessage {
-            role: "system".to_string(),
-            content: text.to_string(),
-        })
+    fn system_message(soul: &SoulManager, skill_manager: &SkillManager) -> Option<ChatMessage> {
+        let mut content = String::new();
+        
+        // Add SOUL.md content
+        if let Some(soul_text) = soul.get_content() {
+            content.push_str(soul_text);
+        }
+        
+        // Add skills context
+        let skills_context = skill_manager.generate_prompt_context();
+        if !skills_context.is_empty() {
+            if !content.is_empty() {
+                content.push_str("\n\n");
+            }
+            content.push_str(&skills_context);
+        }
+        
+        if content.is_empty() {
+            None
+        } else {
+            Some(ChatMessage {
+                role: "system".to_string(),
+                content,
+            })
+        }
     }
 
     /// Load conversation history from disk, prepending the system prompt.
-    fn load_history(path: &std::path::Path, soul: &SoulManager) -> Vec<ChatMessage> {
+    fn load_history(path: &std::path::Path, soul: &SoulManager, skill_manager: &SkillManager) -> Vec<ChatMessage> {
         let mut history = Vec::new();
 
         // Always lead with the system prompt.
-        if let Some(sys) = Self::system_message(soul) {
+        if let Some(sys) = Self::system_message(soul, skill_manager) {
             history.push(sys);
         }
 
@@ -1663,7 +1683,7 @@ impl App {
     /// the system prompt.
     fn clear_history(&mut self) {
         self.state.conversation_history.clear();
-        if let Some(sys) = Self::system_message(&self.state.soul_manager) {
+        if let Some(sys) = Self::system_message(&self.state.soul_manager, &self.state.skill_manager) {
             self.state.conversation_history.push(sys);
         }
         let path = Self::history_path(&self.state.config);
