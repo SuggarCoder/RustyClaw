@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -294,8 +296,32 @@ impl App {
             secrets_manager.set_agent_access(config.agent_access);
         }
 
-        let skills_dir = config.skills_dir();
-        let mut skill_manager = SkillManager::new(skills_dir);
+        // Build skill directories list (highest precedence last):
+        // 1. Bundled OpenClaw skills (if available)
+        // 2. User OpenClaw skills (~/.openclaw/workspace/skills)
+        // 3. User RustyClaw skills (~/.rustyclaw/workspace/skills)
+        // 4. Configured skills_dir (if different)
+        let mut skills_dirs = Vec::new();
+        
+        // OpenClaw bundled skills (npm global install)
+        let openclaw_bundled = PathBuf::from("/usr/lib/node_modules/openclaw/skills");
+        if openclaw_bundled.exists() {
+            skills_dirs.push(openclaw_bundled);
+        }
+        
+        // OpenClaw user skills
+        if let Some(home) = dirs::home_dir() {
+            let openclaw_user = home.join(".openclaw/workspace/skills");
+            if openclaw_user.exists() {
+                skills_dirs.push(openclaw_user);
+            }
+        }
+        
+        // RustyClaw user skills (primary)
+        let rustyclaw_skills = config.skills_dir();
+        skills_dirs.push(rustyclaw_skills);
+        
+        let mut skill_manager = SkillManager::with_dirs(skills_dirs);
         let _ = skill_manager.load_skills();
 
         let soul_path = config.soul_path();
