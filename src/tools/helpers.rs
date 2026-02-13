@@ -53,16 +53,6 @@ pub fn run_sandboxed_command(command: &str, cwd: &Path) -> Result<std::process::
     }
 }
 
-// ── Global process manager ──────────────────────────────────────────────────
-
-/// Global process manager for background exec sessions.
-static PROCESS_MANAGER: OnceLock<SharedProcessManager> = OnceLock::new();
-
-/// Get the global process manager instance.
-pub fn process_manager() -> &'static SharedProcessManager {
-    PROCESS_MANAGER.get_or_init(|| Arc::new(Mutex::new(ProcessManager::new())))
-}
-
 // ── Credentials directory protection ────────────────────────────────────────
 
 /// Absolute path of the credentials directory, set once at gateway startup.
