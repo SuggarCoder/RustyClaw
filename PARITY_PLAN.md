@@ -2,7 +2,7 @@
 
 ## Current State (RustyClaw)
 
-### ✅ Implemented Tools (26 total)
+### ✅ Implemented Tools (30 total)
 1. `read_file` — read file contents with line ranges; auto-extracts text from .docx/.doc/.rtf/.pdf via textutil
 2. `write_file` — create/overwrite files
 3. `edit_file` — search-and-replace edits
@@ -29,6 +29,10 @@
 24. `gateway` — config get/apply/patch, restart, update
 25. `message` — cross-platform messaging (send, broadcast)
 26. `tts` — text-to-speech conversion
+27. `image` — vision model image analysis
+28. `nodes` — paired device discovery and control
+29. `browser` — web browser automation (Playwright/CDP stub)
+30. `canvas` — node canvas UI presentation (A2UI stub)
 
 ### ✅ Implemented Features
 - Multi-provider support (OpenAI, Anthropic, Google, GitHub Copilot, xAI, OpenRouter, Ollama, custom)
@@ -304,6 +308,10 @@ Needed: Extended config for:
 | Message tool | ✅ Complete | send, broadcast |
 | TTS | ✅ Complete | text-to-speech stub |
 | Apply patch | ✅ Complete | multi-hunk diff |
+| Image analysis | ✅ Complete | vision model stub |
+| Browser automation | ✅ Complete | Playwright/CDP stub |
+| Node/device control | ✅ Complete | camera, screen, location, run, invoke |
+| Canvas | ✅ Complete | present, eval, snapshot, A2UI |
 | Context management (compaction, token tracking) | ✅ Complete | — |
 | Conversation memory (persistence, replay) | ✅ Complete | — |
 | Gateway (auth, heartbeat, message types) | ✅ Complete | — |
@@ -312,7 +320,3 @@ Needed: Extended config for:
 | Skills (loading, format support) | ⚠️ Partial | Load only, no execution runtime |
 | Messengers | ⚠️ Partial | Trait only, no backends |
 | Provider streaming | ❌ Not started | Non-streaming |
-| Browser automation | ❌ Not started | — |
-| Node/device control | ❌ Not started | — |
-| Canvas | ❌ Not started | — |
-| Image analysis | ❌ Not started | — |
