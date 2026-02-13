@@ -1,0 +1,696 @@
+//! Gateway module — WebSocket server for agent communication.
+//!
+//! This module provides the gateway server that handles WebSocket connections
+//! from TUI clients, manages authentication, and dispatches chat requests to
+//! model providers.
+
+mod auth;
+mod helpers;
+mod providers;
+mod secrets_handler;
+mod skills_handler;
+mod types;
+
+// Re-export public types
+pub use types::{
+    ChatMessage, ChatRequest, CopilotSession, GatewayOptions, ModelContext, ModelResponse,
+    ParsedToolCall, ProbeResult, ProviderRequest, ToolCallResult,
+};
+
+use crate::config::Config;
+use crate::providers as crate_providers;
+use crate::secrets::SecretsManager;
+use crate::skills::SkillManager;
+use crate::tools;
+use anyhow::{Context, Result};
+use futures_util::stream::SplitSink;
+use futures_util::{SinkExt, StreamExt};
+use serde_json::json;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
+use tokio_util::sync::CancellationToken;
+
+/// Type alias for the server-side WebSocket write half.
+type WsWriter = SplitSink<WebSocketStream<tokio::net::TcpStream>, Message>;
+
+/// Gateway-owned secrets vault, shared across connections.
+///
+/// The vault may start in a locked state (no password provided yet) and
+/// be unlocked later via a control message from an authenticated client.
+pub type SharedVault = Arc<Mutex<SecretsManager>>;
+
+/// Gateway-owned skill manager, shared across connections.
+pub type SharedSkillManager = Arc<Mutex<SkillManager>>;
+
+// Re-export validate_model_connection for external use
+pub use providers::validate_model_connection;
+
+// ── Constants ───────────────────────────────────────────────────────────────
+
+/// Duration of the lockout after exceeding the failure limit.
+const TOTP_LOCKOUT_SECS: u64 = 30;
+
+/// Compaction fires when estimated usage exceeds this fraction of the context window.
+const COMPACTION_THRESHOLD: f64 = 0.75;
+
+/// Run the gateway WebSocket server.
+///
+/// Accepts connections in a loop until the `cancel` token is triggered,
+/// at which point the server shuts down gracefully.
+///
+/// The gateway owns the secrets vault (`vault`) — it uses the vault to
+/// verify TOTP codes during the WebSocket authentication handshake and
+/// to resolve model credentials.  The vault may be in a locked state
+/// (password not yet provided); authenticated clients can unlock it via
+/// a control message.
+///
+/// When `model_ctx` is provided the gateway owns the provider credentials
+/// and every chat request is resolved against that context.  If `None`,
+/// clients must send full `ChatRequest` payloads including provider info.
+pub async fn run_gateway(
+    config: Config,
+    options: GatewayOptions,
+    model_ctx: Option<ModelContext>,
+    vault: SharedVault,
+    skill_mgr: SharedSkillManager,
+    cancel: CancellationToken,
+) -> Result<()> {
+    // Register the credentials directory so file-access tools can enforce
+    // the vault boundary (blocks read_file, execute_command, etc.).
+    tools::set_credentials_dir(config.credentials_dir());
+
+    let addr = helpers::resolve_listen_addr(&options.listen)?;
+    let listener = TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("Failed to bind gateway to {}", addr))?;
+
+    // If the provider uses Copilot session tokens, wrap the OAuth token in
+    // a CopilotSession so all connections share the same cached session.
+    let copilot_session: Option<Arc<CopilotSession>> = model_ctx
+        .as_ref()
+        .filter(|ctx| crate_providers::needs_copilot_session(&ctx.provider))
+        .and_then(|ctx| ctx.api_key.clone())
+        .map(|oauth| Arc::new(CopilotSession::new(oauth)));
+
+    let model_ctx = model_ctx.map(Arc::new);
+    let rate_limiter = auth::new_rate_limiter();
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                break;
+            }
+            accepted = listener.accept() => {
+                let (stream, peer) = accepted?;
+                let config_clone = config.clone();
+                let ctx_clone = model_ctx.clone();
+                let session_clone = copilot_session.clone();
+                let vault_clone = vault.clone();
+                let skill_clone = skill_mgr.clone();
+                let limiter_clone = rate_limiter.clone();
+                let child_cancel = cancel.child_token();
+                tokio::spawn(async move {
+                    if let Err(err) = handle_connection(
+                        stream, peer, config_clone, ctx_clone,
+                        session_clone, vault_clone, skill_clone,
+                        limiter_clone, child_cancel,
+                    ).await {
+                        eprintln!("Gateway connection error from {}: {}", peer, err);
+                    }
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_connection(
+    stream: tokio::net::TcpStream,
+    peer: SocketAddr,
+    config: Config,
+    model_ctx: Option<Arc<ModelContext>>,
+    copilot_session: Option<Arc<CopilotSession>>,
+    vault: SharedVault,
+    skill_mgr: SharedSkillManager,
+    rate_limiter: auth::RateLimiter,
+    cancel: CancellationToken,
+) -> Result<()> {
+    let ws_stream = tokio_tungstenite::accept_async(stream)
+        .await
+        .context("WebSocket handshake failed")?;
+    let (mut writer, mut reader) = ws_stream.split();
+    let peer_ip = peer.ip();
+
+    // ── TOTP authentication challenge ───────────────────────────────
+    //
+    // If TOTP 2FA is enabled, we require the client to prove identity
+    // before granting access to the gateway's capabilities.
+    if config.totp_enabled {
+        // Check rate limit first.
+        if let Some(remaining) = auth::check_rate_limit(&rate_limiter, peer_ip).await {
+            let frame = json!({
+                "type": "auth_locked",
+                "message": format!("Too many failed attempts. Try again in {}s.", remaining),
+                "retry_after": remaining,
+            });
+            writer.send(Message::Text(frame.to_string().into())).await?;
+            writer.send(Message::Close(None)).await?;
+            return Ok(());
+        }
+
+        // Send challenge.
+        let challenge = json!({ "type": "auth_challenge", "method": "totp" });
+        writer.send(Message::Text(challenge.to_string().into())).await
+            .context("Failed to send auth_challenge")?;
+
+        // Wait for auth_response (with a timeout).
+        let auth_result = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            auth::wait_for_auth_response(&mut reader),
+        )
+        .await;
+
+        match auth_result {
+            Ok(Ok(code)) => {
+                let valid = {
+                    let mut v = vault.lock().await;
+                    v.verify_totp(code.trim()).unwrap_or(false)
+                };
+                if valid {
+                    auth::clear_rate_limit(&rate_limiter, peer_ip).await;
+                    let ok = json!({ "type": "auth_result", "ok": true });
+                    writer.send(Message::Text(ok.to_string().into())).await?;
+                } else {
+                    let locked_out = auth::record_totp_failure(&rate_limiter, peer_ip).await;
+                    let msg = if locked_out {
+                        format!(
+                            "Invalid code. Too many failures — locked out for {}s.",
+                            TOTP_LOCKOUT_SECS,
+                        )
+                    } else {
+                        "Invalid 2FA code.".to_string()
+                    };
+                    let fail = json!({ "type": "auth_result", "ok": false, "message": msg });
+                    writer.send(Message::Text(fail.to_string().into())).await?;
+                    writer.send(Message::Close(None)).await?;
+                    return Ok(());
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("Auth error from {}: {}", peer, e);
+                return Ok(());
+            }
+            Err(_) => {
+                let timeout = json!({
+                    "type": "auth_result",
+                    "ok": false,
+                    "message": "Authentication timed out.",
+                });
+                let _ = writer.send(Message::Text(timeout.to_string().into())).await;
+                let _ = writer.send(Message::Close(None)).await;
+                return Ok(());
+            }
+        }
+    }
+
+    // ── Check vault status ──────────────────────────────────────────
+    let vault_is_locked = {
+        let v = vault.lock().await;
+        v.is_locked()
+    };
+
+    // ── Send hello ──────────────────────────────────────────────────
+    let mut hello = json!({
+        "type": "hello",
+        "agent": "rustyclaw",
+        "settings_dir": config.settings_dir,
+        "vault_locked": vault_is_locked,
+    });
+    if let Some(ref ctx) = model_ctx {
+        hello["provider"] = serde_json::Value::String(ctx.provider.clone());
+        hello["model"] = serde_json::Value::String(ctx.model.clone());
+    }
+    writer
+        .send(Message::Text(hello.to_string().into()))
+        .await
+        .context("Failed to send hello message")?;
+
+    if vault_is_locked {
+        writer
+            .send(Message::Text(
+                helpers::status_frame("vault_locked", "Secrets vault is locked — provide password to unlock")
+                    .into(),
+            ))
+            .await
+            .context("Failed to send vault_locked status")?;
+    }
+
+    // ── Report model status to the freshly-connected client ────────
+    let http = reqwest::Client::new();
+
+    match model_ctx {
+        Some(ref ctx) => {
+            let display = crate_providers::display_name_for_provider(&ctx.provider);
+
+            // 1. Model configured
+            let detail = format!("{} / {}", display, ctx.model);
+            writer
+                .send(Message::Text(
+                    helpers::status_frame("model_configured", &detail).into(),
+                ))
+                .await
+                .context("Failed to send model_configured status")?;
+
+            // 2. Credentials
+            if ctx.api_key.is_some() {
+                writer
+                    .send(Message::Text(
+                        helpers::status_frame("credentials_loaded", &format!("{} API key loaded", display))
+                            .into(),
+                    ))
+                    .await
+                    .context("Failed to send credentials_loaded status")?;
+            } else if crate_providers::secret_key_for_provider(&ctx.provider).is_some() {
+                writer
+                    .send(Message::Text(
+                        helpers::status_frame(
+                            "credentials_missing",
+                            &format!("No API key for {} — model calls will fail", display),
+                        )
+                        .into(),
+                    ))
+                    .await
+                    .context("Failed to send credentials_missing status")?;
+            }
+
+            // 3. Validate the connection with a lightweight probe
+            //
+            // For Copilot providers, exchange the OAuth token for a session
+            // token first — the probe must use the session token too.
+            writer
+                .send(Message::Text(
+                    helpers::status_frame("model_connecting", &format!("Probing {} …", ctx.base_url))
+                        .into(),
+                ))
+                .await
+                .context("Failed to send model_connecting status")?;
+
+            match providers::validate_model_connection(&http, ctx, copilot_session.as_deref()).await {
+                ProbeResult::Ready => {
+                    writer
+                        .send(Message::Text(
+                            helpers::status_frame(
+                                "model_ready",
+                                &format!("{} / {} ready", display, ctx.model),
+                            )
+                            .into(),
+                        ))
+                        .await
+                        .context("Failed to send model_ready status")?;
+                }
+                ProbeResult::Connected { warning } => {
+                    // Auth is fine, provider is reachable — the specific
+                    // probe request wasn't accepted, but chat will likely
+                    // work with the real request format.
+                    writer
+                        .send(Message::Text(
+                            helpers::status_frame(
+                                "model_ready",
+                                &format!("{} / {} connected (probe: {})", display, ctx.model, warning),
+                            )
+                            .into(),
+                        ))
+                        .await
+                        .context("Failed to send model_ready status")?;
+                }
+                ProbeResult::AuthError { detail } => {
+                    writer
+                        .send(Message::Text(
+                            helpers::status_frame(
+                                "model_error",
+                                &format!("{} auth failed: {}", display, detail),
+                            )
+                            .into(),
+                        ))
+                        .await
+                        .context("Failed to send model_error status")?;
+                }
+                ProbeResult::Unreachable { detail } => {
+                    writer
+                        .send(Message::Text(
+                            helpers::status_frame(
+                                "model_error",
+                                &format!("{} probe failed: {}", display, detail),
+                            )
+                            .into(),
+                        ))
+                        .await
+                        .context("Failed to send model_error status")?;
+                }
+            }
+        }
+        None => {
+            writer
+                .send(Message::Text(
+                    helpers::status_frame(
+                        "no_model",
+                        "No model configured — clients must send full credentials",
+                    )
+                    .into(),
+                ))
+                .await
+                .context("Failed to send no_model status")?;
+        }
+    }
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                let _ = writer.send(Message::Close(None)).await;
+                break;
+            }
+            msg = reader.next() => {
+                let message = match msg {
+                    Some(Ok(m)) => m,
+                    Some(Err(e)) => return Err(e.into()),
+                    None => break,
+                };
+                match message {
+                    Message::Text(text) => {
+                        // ── Handle unlock_vault control message ─────
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
+                            if val.get("type").and_then(|t| t.as_str()) == Some("unlock_vault") {
+                                if let Some(pw) = val.get("password").and_then(|p| p.as_str()) {
+                                    let mut v = vault.lock().await;
+                                    v.set_password(pw.to_string());
+                                    // Try to access the vault to verify the password works.
+                                    // get_secret returns Err if the vault cannot be decrypted.
+                                    match v.get_secret("__vault_check__", true) {
+                                        Ok(_) => {
+                                            let ok = json!({
+                                                "type": "vault_unlocked",
+                                                "ok": true,
+                                            });
+                                            let _ = writer.send(Message::Text(ok.to_string().into())).await;
+                                        }
+                                        Err(e) => {
+                                            // Revert to locked state.
+                                            v.clear_password();
+                                            let fail = json!({
+                                                "type": "vault_unlocked",
+                                                "ok": false,
+                                                "message": format!("Failed to unlock vault: {}", e),
+                                            });
+                                            let _ = writer.send(Message::Text(fail.to_string().into())).await;
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+
+                        let workspace_dir = config.workspace_dir();
+                        if let Err(err) = dispatch_text_message(
+                            &http,
+                            text.as_str(),
+                            model_ctx.as_deref(),
+                            copilot_session.as_deref(),
+                            &mut writer,
+                            &workspace_dir,
+                            &vault,
+                            &skill_mgr,
+                        )
+                        .await
+                        {
+                            let frame = json!({
+                                "type": "error",
+                                "ok": false,
+                                "message": err.to_string(),
+                            });
+                            let _ = writer
+                                .send(Message::Text(frame.to_string().into()))
+                                .await;
+                        }
+                    }
+                    Message::Binary(_) => {
+                        let response = json!({
+                            "type": "error",
+                            "ok": false,
+                            "message": "Binary frames are not supported",
+                        });
+                        writer
+                            .send(Message::Text(response.to_string().into()))
+                            .await
+                            .context("Failed to send error response")?;
+                    }
+                    Message::Close(_) => {
+                        break;
+                    }
+                    Message::Ping(payload) => {
+                        writer.send(Message::Pong(payload)).await?;
+                    }
+                    Message::Pong(_) => {}
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Route an incoming text frame to the appropriate handler.
+///
+/// Implements an agentic tool loop: the model is called, and if it
+/// requests tool calls, the gateway executes them locally and feeds
+/// the results back into the conversation, repeating until the model
+/// produces a final text response (or a safety limit is hit).
+async fn dispatch_text_message(
+    http: &reqwest::Client,
+    text: &str,
+    model_ctx: Option<&ModelContext>,
+    copilot_session: Option<&CopilotSession>,
+    writer: &mut WsWriter,
+    workspace_dir: &std::path::Path,
+    vault: &SharedVault,
+    skill_mgr: &SharedSkillManager,
+) -> Result<()> {
+    // Try to parse as a structured JSON request.
+    let req = match serde_json::from_str::<ChatRequest>(text) {
+        Ok(r) if r.msg_type == "chat" => r,
+        Ok(r) => {
+            let frame = json!({
+                "type": "error",
+                "ok": false,
+                "message": format!("Unknown message type: {:?}", r.msg_type),
+            });
+            writer
+                .send(Message::Text(frame.to_string().into()))
+                .await
+                .context("Failed to send error frame")?;
+            return Ok(());
+        }
+        Err(err) => {
+            let frame = json!({
+                "type": "error",
+                "ok": false,
+                "message": format!("Invalid JSON: {}", err),
+            });
+            writer
+                .send(Message::Text(frame.to_string().into()))
+                .await
+                .context("Failed to send error frame")?;
+            return Ok(());
+        }
+    };
+
+    let mut resolved = match providers::resolve_request(req, model_ctx) {
+        Ok(r) => r,
+        Err(msg) => {
+            let frame = json!({ "type": "error", "ok": false, "message": msg });
+            writer
+                .send(Message::Text(frame.to_string().into()))
+                .await
+                .context("Failed to send error frame")?;
+            return Ok(());
+        }
+    };
+
+    // For Copilot providers, swap the raw OAuth token for a session token.
+    match auth::resolve_bearer_token(
+        http,
+        &resolved.provider,
+        resolved.api_key.as_deref(),
+        copilot_session,
+    )
+    .await
+    {
+        Ok(token) => resolved.api_key = token,
+        Err(err) => {
+            let frame = json!({
+                "type": "error",
+                "ok": false,
+                "message": format!("Token exchange failed: {}", err),
+            });
+            writer
+                .send(Message::Text(frame.to_string().into()))
+                .await
+                .context("Failed to send error frame")?;
+            return Ok(());
+        }
+    }
+
+    // ── Agentic tool loop ───────────────────────────────────────────
+    const MAX_TOOL_ROUNDS: usize = 25;
+
+    let context_limit = helpers::context_window_for_model(&resolved.model);
+
+    for _round in 0..MAX_TOOL_ROUNDS {
+        // ── Auto-compact if context is getting large ────────────────
+        let estimated = helpers::estimate_tokens(&resolved.messages);
+        let threshold = (context_limit as f64 * COMPACTION_THRESHOLD) as usize;
+        if estimated > threshold {
+            match providers::compact_conversation(
+                http,
+                &mut resolved,
+                context_limit,
+                writer,
+            )
+            .await
+            {
+                Ok(()) => {} // compacted in-place
+                Err(err) => {
+                    // Non-fatal — log a warning and keep going with the
+                    // full context; the provider may still accept it.
+                    let warn_frame = json!({
+                        "type": "info",
+                        "message": format!("Context compaction failed: {}", err),
+                    });
+                    let _ = writer
+                        .send(Message::Text(warn_frame.to_string().into()))
+                        .await;
+                }
+            }
+        }
+
+        let result = if resolved.provider == "anthropic" {
+            providers::call_anthropic_with_tools(http, &resolved).await
+        } else if resolved.provider == "google" {
+            providers::call_google_with_tools(http, &resolved).await
+        } else {
+            providers::call_openai_with_tools(http, &resolved).await
+        };
+
+        let model_resp = match result {
+            Ok(r) => r,
+            Err(err) => {
+                let frame = json!({
+                    "type": "error",
+                    "ok": false,
+                    "message": err.to_string(),
+                });
+                writer
+                    .send(Message::Text(frame.to_string().into()))
+                    .await
+                    .context("Failed to send error frame")?;
+                return Ok(());
+            }
+        };
+
+        // Stream any text content to the client.
+        if !model_resp.text.is_empty() {
+            providers::send_chunk(writer, &model_resp.text).await?;
+        }
+
+        if model_resp.tool_calls.is_empty() {
+            // No tool calls — the model is done.
+            providers::send_response_done(writer).await?;
+            return Ok(());
+        }
+
+        // ── Execute each requested tool ─────────────────────────────
+        let mut tool_results: Vec<ToolCallResult> = Vec::new();
+
+        for tc in &model_resp.tool_calls {
+            // Notify the client about the tool call.
+            let call_frame = json!({
+                "type": "tool_call",
+                "id": tc.id,
+                "name": tc.name,
+                "arguments": tc.arguments,
+            });
+            writer
+                .send(Message::Text(call_frame.to_string().into()))
+                .await
+                .context("Failed to send tool_call frame")?;
+
+            // Execute the tool.
+            let (output, is_error) = if tools::is_secrets_tool(&tc.name) {
+                // Secrets tools are handled here — they need vault access.
+                match secrets_handler::execute_secrets_tool(&tc.name, &tc.arguments, vault).await {
+                    Ok(text) => (text, false),
+                    Err(err) => (err, true),
+                }
+            } else if tools::is_skill_tool(&tc.name) {
+                // Skill tools are handled here — they need SkillManager access.
+                match skills_handler::execute_skill_tool(&tc.name, &tc.arguments, skill_mgr).await {
+                    Ok(text) => (text, false),
+                    Err(err) => (err, true),
+                }
+            } else {
+                match tools::execute_tool(&tc.name, &tc.arguments, workspace_dir) {
+                    Ok(text) => (text, false),
+                    Err(err) => (err, true),
+                }
+            };
+
+            // Notify the client about the result.
+            let result_frame = json!({
+                "type": "tool_result",
+                "id": tc.id,
+                "name": tc.name,
+                "result": output,
+                "is_error": is_error,
+            });
+            writer
+                .send(Message::Text(result_frame.to_string().into()))
+                .await
+                .context("Failed to send tool_result frame")?;
+
+            tool_results.push(ToolCallResult {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                output,
+                is_error,
+            });
+        }
+
+        // ── Append assistant + tool-result messages to conversation ──
+        // The model's response (possibly with text + tool calls) becomes
+        // an assistant message, and each tool result becomes a tool message.
+        providers::append_tool_round(
+            &resolved.provider,
+            &mut resolved.messages,
+            &model_resp,
+            &tool_results,
+        );
+    }
+
+    // If we exhausted all rounds, send what we have and stop.
+    let frame = json!({
+        "type": "error",
+        "ok": false,
+        "message": "Tool loop limit reached — stopping.",
+    });
+    writer
+        .send(Message::Text(frame.to_string().into()))
+        .await
+        .context("Failed to send error frame")?;
+    providers::send_response_done(writer).await?;
+    Ok(())
+}
