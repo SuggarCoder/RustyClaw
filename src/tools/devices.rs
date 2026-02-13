@@ -625,7 +625,7 @@ fn node_screen_snap(node: &str, _facing: &str) -> Result<String, String> {
         }
         
         NodeType::Rdp { user, host, port } => {
-            let local_path = format!("/tmp/rdp_snap_{}.png", timestamp);
+            let _local_path = format!("/tmp/rdp_snap_{}.png", timestamp);
             
             // xfreerdp can take screenshots via /exec or by capturing initial frame
             // We'll use a quick connect + screenshot approach
@@ -893,7 +893,8 @@ fn node_send_key(node: &str, key: &str) -> Result<String, String> {
         
         NodeType::Adb { device } => {
             // Map common key names to Android keycodes
-            let keycode = match key.to_uppercase().as_str() {
+            let key_upper = key.to_uppercase();
+            let keycode = match key_upper.as_str() {
                 "ENTER" | "RETURN" => "66",
                 "BACK" | "ESCAPE" => "4",
                 "HOME" => "3",

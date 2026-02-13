@@ -528,7 +528,7 @@ async fn exec_browser_async(args: &Value, action: &str) -> Result<String, String
 
 #[cfg(not(feature = "browser"))]
 fn exec_browser_stub(args: &Value, action: &str) -> Result<String, String> {
-    let profile = args
+    let _profile = args
         .get("profile")
         .and_then(|v| v.as_str())
         .unwrap_or("openclaw");

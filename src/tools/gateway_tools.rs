@@ -188,12 +188,16 @@ pub fn exec_message(args: &Value, _workspace_dir: &Path) -> Result<String, Strin
                 "discord" => send_discord(target, message),
                 "telegram" => send_telegram(target, message),
                 "webhook" => {
-                    let url = args
+                    let webhook_url = args
                         .get("webhookUrl")
                         .and_then(|v| v.as_str())
-                        .or_else(|| std::env::var("WEBHOOK_URL").ok().as_deref().map(|s| s.to_string()).as_deref())
-                        .ok_or("Missing webhookUrl for webhook channel")?;
-                    send_webhook(url, target, message)
+                        .map(|s| s.to_string())
+                        .or_else(|| std::env::var("WEBHOOK_URL").ok());
+                    
+                    match webhook_url {
+                        Some(url) => send_webhook(&url, target, message),
+                        None => Err("Missing webhookUrl for webhook channel".to_string()),
+                    }
                 }
                 "auto" | _ => {
                     // Try messengers in order
