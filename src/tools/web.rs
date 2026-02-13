@@ -1,10 +1,15 @@
 //! Web tools: web_fetch and web_search.
 
+use super::helpers::vault;
 use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
 
 /// Fetch a URL and extract readable content as markdown or plain text.
+///
+/// When `use_cookies` is true, automatically:
+/// - Attaches stored cookies matching the request domain
+/// - Stores any Set-Cookie headers from the response
 pub fn exec_web_fetch(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     let url = args
         .get("url")
@@ -21,24 +26,67 @@ pub fn exec_web_fetch(args: &Value, _workspace_dir: &Path) -> Result<String, Str
         .and_then(|v| v.as_u64())
         .unwrap_or(50_000) as usize;
 
+    // Cookie jar support
+    let use_cookies = args
+        .get("use_cookies")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     // Validate URL
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("URL must start with http:// or https://".to_string());
     }
 
-    // Use a blocking HTTP client since tools are sync
-    let client = reqwest::blocking::Client::builder()
+    // Parse URL for domain extraction
+    let parsed_url =
+        url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
+    let domain = parsed_url
+        .host_str()
+        .ok_or_else(|| "URL has no host".to_string())?;
+    let path = parsed_url.path();
+    let is_secure = parsed_url.scheme() == "https";
+
+    // Build HTTP client
+    let mut client_builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .user_agent("RustyClaw/0.1 (web_fetch tool)")
+        // Don't follow redirects automatically so we can handle Set-Cookie
+        .redirect(reqwest::redirect::Policy::limited(10));
+
+    let client = client_builder
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let response = client
-        .get(url)
+    // Build request with optional cookies
+    let mut request = client.get(url);
+
+    if use_cookies {
+        if let Some(cookie_header) = get_cookie_header(domain, path, is_secure) {
+            request = request.header("Cookie", cookie_header);
+        }
+    }
+
+    let response = request
         .send()
         .map_err(|e| format!("HTTP request failed: {}", e))?;
 
     let status = response.status();
+
+    // Store Set-Cookie headers before consuming the response
+    if use_cookies {
+        let set_cookie_headers: Vec<String> = response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .collect();
+
+        if !set_cookie_headers.is_empty() {
+            store_response_cookies(domain, &set_cookie_headers);
+        }
+    }
+
     if !status.is_success() {
         return Err(format!(
             "HTTP {} — {}",
@@ -108,6 +156,29 @@ pub fn exec_web_fetch(args: &Value, _workspace_dir: &Path) -> Result<String, Str
     }
 
     Ok(result)
+}
+
+/// Get the Cookie header for a request, if cookies are available.
+fn get_cookie_header(domain: &str, path: &str, is_secure: bool) -> Option<String> {
+    let vault_ref = vault()?;
+    let mut vault_guard = vault_ref.lock().ok()?;
+
+    // Use agent_access setting — no explicit user approval for cookie reads
+    // during web_fetch (the user approved by setting use_cookies=true)
+    vault_guard
+        .cookie_header_for_request(domain, path, is_secure, true)
+        .ok()
+        .flatten()
+}
+
+/// Store Set-Cookie headers from a response.
+fn store_response_cookies(domain: &str, headers: &[String]) {
+    if let Some(vault_ref) = vault() {
+        if let Ok(mut vault_guard) = vault_ref.lock() {
+            // Best effort — don't fail the request if cookie storage fails
+            let _ = vault_guard.store_cookies_from_response(domain, headers, true);
+        }
+    }
 }
 
 /// Extract the main readable content from an HTML document.

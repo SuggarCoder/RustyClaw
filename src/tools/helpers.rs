@@ -58,6 +58,26 @@ pub fn run_sandboxed_command(command: &str, cwd: &Path) -> Result<std::process::
 /// Absolute path of the credentials directory, set once at gateway startup.
 static CREDENTIALS_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+// ── Global vault for cookie jar access ──────────────────────────────────────
+
+use crate::secrets::SecretsManager;
+
+/// Shared vault type for thread-safe access.
+pub type SharedVault = Arc<Mutex<SecretsManager>>;
+
+/// Global vault instance, set once at gateway startup.
+static VAULT: OnceLock<SharedVault> = OnceLock::new();
+
+/// Called once from the gateway to register the vault for tool access.
+pub fn set_vault(vault: SharedVault) {
+    let _ = VAULT.set(vault);
+}
+
+/// Get the global vault instance, if initialized.
+pub fn vault() -> Option<&'static SharedVault> {
+    VAULT.get()
+}
+
 /// Called once from the gateway to register the credentials path.
 pub fn set_credentials_dir(path: PathBuf) {
     let _ = CREDENTIALS_DIR.set(path);

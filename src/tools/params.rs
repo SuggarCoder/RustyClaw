@@ -197,6 +197,15 @@ pub fn web_fetch_params() -> Vec<ToolParam> {
             param_type: "integer".into(),
             required: false,
         },
+        ToolParam {
+            name: "use_cookies".into(),
+            description: "Use stored cookies for this request and save any \
+                          Set-Cookie headers from the response. Follows browser \
+                          security rules (domain scoping, Secure flag). Default: false."
+                .into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
     ]
 }
 

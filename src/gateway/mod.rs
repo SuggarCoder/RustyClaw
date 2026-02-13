@@ -83,6 +83,9 @@ pub async fn run_gateway(
     // the vault boundary (blocks read_file, execute_command, etc.).
     tools::set_credentials_dir(config.credentials_dir());
 
+    // Register the vault so web_fetch can access the cookie jar.
+    tools::set_vault(vault.clone());
+
     // Initialize sandbox for command execution
     let sandbox_mode = config.sandbox.mode.parse().unwrap_or_default();
     tools::init_sandbox(

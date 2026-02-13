@@ -24,6 +24,7 @@ pub use helpers::{
     process_manager, set_credentials_dir, is_protected_path,
     expand_tilde, VAULT_ACCESS_DENIED, command_references_credentials,
     init_sandbox, sandbox, run_sandboxed_command,
+    set_vault, vault, SharedVault,
 };
 
 // File operations
@@ -211,6 +212,7 @@ pub static WEB_FETCH: ToolDef = ToolDef {
     name: "web_fetch",
     description: "Fetch and extract readable content from a URL (HTML → markdown or plain text). \
                   Use for reading web pages, documentation, articles, or any HTTP-accessible content. \
+                  Set use_cookies=true to use stored browser cookies for authenticated requests. \
                   For JavaScript-heavy sites that require rendering, use a browser tool instead.",
     parameters: vec![],
     execute: exec_web_fetch,
