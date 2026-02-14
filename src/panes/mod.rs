@@ -148,6 +148,8 @@ pub struct PaneState<'a> {
     pub gateway_status: GatewayStatus,
     /// Animated loading line shown at the bottom of the messages list.
     pub loading_line: Option<String>,
+    /// When streaming started (for elapsed time display in footer).
+    pub streaming_started: Option<std::time::Instant>,
 }
 
 #[derive(Default, PartialEq, Eq, Clone, Copy)]

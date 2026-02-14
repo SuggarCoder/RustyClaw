@@ -50,6 +50,8 @@ struct SharedState {
     gateway_status: GatewayStatus,
     /// Animated loading line shown at the bottom of the messages list.
     loading_line: Option<String>,
+    /// When streaming started (for elapsed time display in footer).
+    streaming_started: Option<std::time::Instant>,
 }
 
 impl SharedState {
@@ -63,6 +65,7 @@ impl SharedState {
             input_mode: self.input_mode,
             gateway_status: self.gateway_status,
             loading_line: self.loading_line.clone(),
+            streaming_started: self.streaming_started,
         }
     }
 }
@@ -230,6 +233,7 @@ impl App {
             soul_manager,
             gateway_status,
             loading_line: None,
+            streaming_started: None,
         };
 
         Ok(Self {
@@ -607,6 +611,7 @@ impl App {
                 self.chat_loading_tick = None;
                 self.state.loading_line = None;
                 self.streaming_response = None;
+                self.state.streaming_started = None;
                 self.state
                     .messages
                     .push(DisplayMessage::warning(format!(
@@ -1057,6 +1062,7 @@ impl App {
                 // First chunk — clear the loading spinner and start accumulating.
                 self.state.loading_line = None;
                 self.streaming_response = Some(String::new());
+                self.state.streaming_started = Some(std::time::Instant::now());
                 // Only push a placeholder message if NOT in hatching mode.
                 if !self.showing_hatching {
                     self.state.messages.push(DisplayMessage::assistant(""));
@@ -1082,6 +1088,7 @@ impl App {
         if frame_type == Some("response_done") {
             self.chat_loading_tick = None;
             self.state.loading_line = None;
+            self.state.streaming_started = None;
 
             if let Some(buf) = self.streaming_response.take() {
                 // During hatching, deliver the full accumulated text
@@ -1138,6 +1145,7 @@ impl App {
             self.chat_loading_tick = None;
             self.state.loading_line = None;
             self.streaming_response = None;
+            self.state.streaming_started = None;
             let msg = error_message.unwrap_or_else(|| "Unknown gateway error".to_string());
             self.state.messages.push(DisplayMessage::error(msg));
             return Ok(Some(Action::Update));
@@ -1693,6 +1701,7 @@ impl App {
                     self.chat_loading_tick = None;
                     self.state.loading_line = None;
                     self.streaming_response = None;
+                    self.state.streaming_started = None;
                     self.state
                         .messages
                         .push(DisplayMessage::error(format!("Send failed: {}", err)));
@@ -2098,6 +2107,7 @@ impl App {
                 input_mode: self.state.input_mode,
                 gateway_status: self.state.gateway_status,
                 loading_line: self.state.loading_line.clone(),
+                streaming_started: self.state.streaming_started,
             };
 
             // If showing hatching, render it fullscreen and skip everything else

@@ -33,6 +33,8 @@ pub struct FooterPane {
     completion_index: Option<usize>,
     /// Whether the completion popup is visible
     show_completions: bool,
+    /// Tick counter for spinner animation
+    spinner_tick: usize,
 }
 
 
@@ -249,6 +251,8 @@ impl Pane for FooterPane {
                         self.timed_status = None;
                     }
                 }
+                // Advance spinner for streaming indicator
+                self.spinner_tick = self.spinner_tick.wrapping_add(1);
             }
             _ => {}
         }
@@ -276,17 +280,36 @@ impl Pane for FooterPane {
             height: 1,
         };
 
-        // Status line
-        let msg = self
-            .timed_status
-            .as_ref()
-            .map(|ts| ts.message.as_str())
-            .unwrap_or("[ESC → navigate panes] [TAB → complete command] [/help]");
+        // Status line — show streaming indicator if active, otherwise timed/default message
+        let status_content: Line = if let Some(started) = state.streaming_started {
+            // Streaming in progress — show spinner and elapsed time
+            const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let spinner_char = SPINNER[self.spinner_tick % SPINNER.len()];
+            let elapsed = started.elapsed();
+            let secs = elapsed.as_secs();
+            let elapsed_str = if secs >= 60 {
+                format!("{}m {:02}s", secs / 60, secs % 60)
+            } else {
+                format!("{}.{}s", secs, elapsed.subsec_millis() / 100)
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("{} ", spinner_char),
+                    Style::default().fg(tp::ACCENT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("Streaming response ", tp::hint()),
+                Span::styled(elapsed_str, Style::default().fg(tp::MUTED)),
+            ])
+        } else if let Some(ts) = &self.timed_status {
+            Line::from(Span::styled(ts.message.as_str(), tp::hint()))
+        } else {
+            Line::from(Span::styled(
+                "[ESC → navigate panes] [TAB → complete command] [/help]",
+                tp::hint(),
+            ))
+        };
 
-        frame.render_widget(
-            Paragraph::new(msg).style(tp::hint()),
-            status_area,
-        );
+        frame.render_widget(Paragraph::new(status_content), status_area);
 
         self.draw_input(frame, input_area, state);
 
