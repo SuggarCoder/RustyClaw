@@ -555,6 +555,8 @@ fn consume_sse_text(text: &str) -> Result<serde_json::Value> {
 /// even though we didn't request `"stream": true`.
 async fn consume_sse_stream(resp: reqwest::Response) -> Result<serde_json::Value> {
     use futures_util::StreamExt;
+    use std::time::Duration;
+    use tokio::time::timeout;
 
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
@@ -566,7 +568,20 @@ async fn consume_sse_stream(resp: reqwest::Response) -> Result<serde_json::Value
     let mut usage: Option<serde_json::Value> = None;
     let mut model = String::new();
 
-    'outer: while let Some(chunk_result) = stream.next().await {
+    // Timeout for waiting on next chunk — if exceeded, assume stream is done
+    let chunk_timeout = Duration::from_secs(30);
+
+    'outer: loop {
+        // Wait for next chunk with timeout
+        let chunk_result = match timeout(chunk_timeout, stream.next()).await {
+            Ok(Some(result)) => result,
+            Ok(None) => break 'outer, // Stream ended normally
+            Err(_) => {
+                // Timeout — stream stalled, return what we have
+                break 'outer;
+            }
+        };
+
         let chunk = chunk_result.context("SSE stream read error")?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
