@@ -375,6 +375,8 @@ pub struct ToolCallResult {
 pub struct ModelResponse {
     pub text: String,
     pub tool_calls: Vec<ParsedToolCall>,
+    /// The finish reason from the model (e.g., "stop", "tool_calls", "length").
+    pub finish_reason: Option<String>,
     /// Token counts reported by the provider (when available).
     pub prompt_tokens: Option<u64>,
     pub completion_tokens: Option<u64>,

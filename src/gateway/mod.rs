@@ -837,10 +837,41 @@ async fn dispatch_text_message(
             providers::send_chunk(writer, &model_resp.text).await?;
         }
 
+        // Check if the model is truly done or if something went wrong
+        let finish_reason = model_resp.finish_reason.as_deref().unwrap_or("stop");
+
         if model_resp.tool_calls.is_empty() {
-            // No tool calls — the model is done.
-            providers::send_response_done(writer).await?;
-            return Ok(());
+            // No tool calls requested
+            if finish_reason == "stop" || finish_reason == "end_turn" {
+                // Model explicitly finished — we're done
+                providers::send_response_done(writer).await?;
+                return Ok(());
+            } else if finish_reason == "length" {
+                // Hit token limit — warn and stop
+                let frame = json!({
+                    "type": "info",
+                    "message": "Response truncated due to token limit.",
+                });
+                writer
+                    .send(Message::Text(frame.to_string().into()))
+                    .await
+                    .context("Failed to send length warning")?;
+                providers::send_response_done(writer).await?;
+                return Ok(());
+            } else {
+                // Unexpected finish_reason with no tool calls
+                // Log it and treat as done (better than looping forever)
+                let frame = json!({
+                    "type": "info",
+                    "message": format!("Model finished with reason '{}' but no tool calls.", finish_reason),
+                });
+                writer
+                    .send(Message::Text(frame.to_string().into()))
+                    .await
+                    .context("Failed to send finish info")?;
+                providers::send_response_done(writer).await?;
+                return Ok(());
+            }
         }
 
         // ── Execute each requested tool ─────────────────────────────

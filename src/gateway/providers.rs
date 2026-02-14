@@ -536,6 +536,13 @@ fn consume_sse_text(text: &str) -> Result<serde_json::Value> {
         }
     }
 
+    // Count incomplete tool calls for debugging
+    let incomplete_count = tool_calls.iter().filter(|tc| {
+        let id = tc["id"].as_str().unwrap_or("");
+        let name = tc["function"]["name"].as_str().unwrap_or("");
+        id.is_empty() || name.is_empty()
+    }).count();
+
     // Filter out incomplete tool calls (missing id or name)
     let tool_calls: Vec<serde_json::Value> = tool_calls
         .into_iter()
@@ -545,6 +552,15 @@ fn consume_sse_text(text: &str) -> Result<serde_json::Value> {
             !id.is_empty() && !name.is_empty()
         })
         .collect();
+
+    // Log if we filtered any tool calls (for debugging stall issues)
+    if incomplete_count > 0 {
+        eprintln!(
+            "[SSE] Filtered {} incomplete tool calls (text), {} remaining",
+            incomplete_count,
+            tool_calls.len()
+        );
+    }
 
     let mut message = json!({
         "role": "assistant",
@@ -704,6 +720,13 @@ async fn consume_sse_stream(resp: reqwest::Response) -> Result<serde_json::Value
         }
     }
 
+    // Count incomplete tool calls for debugging
+    let incomplete_count = tool_calls.iter().filter(|tc| {
+        let id = tc["id"].as_str().unwrap_or("");
+        let name = tc["function"]["name"].as_str().unwrap_or("");
+        id.is_empty() || name.is_empty()
+    }).count();
+
     // Filter out incomplete tool calls (missing id or name)
     let tool_calls: Vec<serde_json::Value> = tool_calls
         .into_iter()
@@ -713,6 +736,15 @@ async fn consume_sse_stream(resp: reqwest::Response) -> Result<serde_json::Value
             !id.is_empty() && !name.is_empty()
         })
         .collect();
+
+    // Log if we filtered any tool calls (for debugging stall issues)
+    if incomplete_count > 0 {
+        eprintln!(
+            "[SSE] Filtered {} incomplete tool calls (stream), {} remaining",
+            incomplete_count,
+            tool_calls.len()
+        );
+    }
 
     // Build a standard OpenAI-style response object
     let mut message = json!({
@@ -825,6 +857,11 @@ pub async fn call_openai_with_tools(
 
     let mut result = ModelResponse::default();
 
+    // Extract finish_reason
+    if let Some(fr) = choice["finish_reason"].as_str() {
+        result.finish_reason = Some(fr.to_string());
+    }
+
     // Extract text content (ignore whitespace-only content to avoid API errors).
     if let Some(text) = message["content"].as_str() {
         if !text.trim().is_empty() {
@@ -928,6 +965,11 @@ pub async fn call_anthropic_with_tools(
 
     let mut result = ModelResponse::default();
 
+    // Extract stop_reason (Anthropic's equivalent of finish_reason)
+    if let Some(sr) = data["stop_reason"].as_str() {
+        result.finish_reason = Some(sr.to_string());
+    }
+
     if let Some(content) = data["content"].as_array() {
         for block in content {
             match block["type"].as_str() {
@@ -1027,6 +1069,12 @@ pub async fn call_google_with_tools(
     let data: serde_json::Value = resp.json().await.context("Invalid JSON from Google")?;
 
     let mut result = ModelResponse::default();
+
+    // Extract finishReason from Google's format
+    if let Some(fr) = data["candidates"][0]["finishReason"].as_str() {
+        // Convert Google's format to OpenAI-style (STOP -> stop, etc.)
+        result.finish_reason = Some(fr.to_lowercase());
+    }
 
     if let Some(parts) = data["candidates"][0]["content"]["parts"].as_array() {
         for (i, part) in parts.iter().enumerate() {
