@@ -97,7 +97,7 @@ pub fn append_tool_round(
         // Anthropic: assistant message has content blocks (text + tool_use),
         // then one "user" message with tool_result blocks.
         let mut content_blocks = Vec::new();
-        if !model_resp.text.is_empty() {
+        if !model_resp.text.trim().is_empty() {
             content_blocks.push(json!({ "type": "text", "text": model_resp.text }));
         }
         for tc in &model_resp.tool_calls {
@@ -129,7 +129,7 @@ pub fn append_tool_round(
     } else if provider == "google" {
         // Google: model turn with function calls, then user turn with function responses.
         let mut parts = Vec::new();
-        if !model_resp.text.is_empty() {
+        if !model_resp.text.trim().is_empty() {
             parts.push(json!({ "text": model_resp.text }));
         }
         for tc in &model_resp.tool_calls {
@@ -176,7 +176,7 @@ pub fn append_tool_round(
         // The assistant message carries both text and tool_calls.
         let assistant_json = json!({
             "role": "assistant",
-            "content": if model_resp.text.is_empty() { serde_json::Value::Null } else { json!(model_resp.text) },
+            "content": if model_resp.text.trim().is_empty() { serde_json::Value::Null } else { json!(model_resp.text) },
             "tool_calls": tc_array,
         });
         messages.push(ChatMessage::text(
@@ -525,7 +525,7 @@ fn consume_sse_text(text: &str) -> Result<serde_json::Value> {
 
     let mut message = json!({
         "role": "assistant",
-        "content": if content.is_empty() { serde_json::Value::Null } else { json!(content) }
+        "content": if content.trim().is_empty() { serde_json::Value::Null } else { json!(content) }
     });
 
     if !tool_calls.is_empty() {
@@ -659,7 +659,7 @@ async fn consume_sse_stream(resp: reqwest::Response) -> Result<serde_json::Value
     // Build a standard OpenAI-style response object
     let mut message = json!({
         "role": "assistant",
-        "content": if content.is_empty() { serde_json::Value::Null } else { json!(content) }
+        "content": if content.trim().is_empty() { serde_json::Value::Null } else { json!(content) }
     });
 
     if !tool_calls.is_empty() {
@@ -764,9 +764,11 @@ pub async fn call_openai_with_tools(
 
     let mut result = ModelResponse::default();
 
-    // Extract text content.
+    // Extract text content (ignore whitespace-only content to avoid API errors).
     if let Some(text) = message["content"].as_str() {
-        result.text = text.to_string();
+        if !text.trim().is_empty() {
+            result.text = text.to_string();
+        }
     }
 
     // Extract tool calls.
