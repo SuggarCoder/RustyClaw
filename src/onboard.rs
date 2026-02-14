@@ -611,9 +611,12 @@ fn perform_device_flow_auth(
     println!("  {}", t::muted(&format!("Code expires in {} seconds", auth_response.expires_in)));
     println!();
 
-    // Wait for user to press Enter
-    println!("{}", t::accent("Press Enter after completing authorization..."));
-    prompt_line(reader, "")?;
+    // Wait for user to press Enter or type 'cancel'
+    let response = prompt_line(reader, &format!("{} ", t::accent("Press Enter after completing authorization (or type 'cancel'):")))?;
+    if response.trim().eq_ignore_ascii_case("cancel") || response.trim().eq_ignore_ascii_case("c") {
+        println!("  {}", t::muted("Authentication cancelled."));
+        return Ok(());
+    }
 
     // Poll for the token
     println!("  {}", t::muted("Waiting for authorization..."));
