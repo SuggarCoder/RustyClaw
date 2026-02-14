@@ -177,3 +177,60 @@ pub fn should_visit(entry: &walkdir::DirEntry) -> bool {
         true
     }
 }
+
+// ── Tool output sanitization ────────────────────────────────────────────────
+
+/// Maximum size for tool output before truncation (50 KB).
+const MAX_TOOL_OUTPUT_BYTES: usize = 50_000;
+
+/// Detect if content looks like HTML or encoded binary data.
+fn is_likely_garbage(s: &str) -> bool {
+    // Check for HTML markers
+    let lower = s.to_lowercase();
+    if lower.contains("<!doctype") || lower.contains("<html") {
+        return true;
+    }
+    
+    // Check for base64-encoded data URIs
+    if s.contains("data:image/") || s.contains("data:application/") {
+        return true;
+    }
+    
+    // Check for excessive base64-like content (long strings without spaces)
+    let lines: Vec<&str> = s.lines().collect();
+    let long_dense_lines = lines.iter().filter(|line| {
+        line.len() > 500 && !line.contains(' ')
+    }).count();
+    if long_dense_lines > 3 {
+        return true;
+    }
+    
+    false
+}
+
+/// Sanitize tool output: truncate if too large, warn if garbage detected.
+pub fn sanitize_tool_output(output: String) -> String {
+    // Check for garbage content first
+    if is_likely_garbage(&output) {
+        let preview_len = output.len().min(500);
+        let preview: String = output.chars().take(preview_len).collect();
+        return format!(
+            "[Warning: Tool returned HTML/binary content ({} bytes) — likely not useful]\n\nPreview:\n{}...",
+            output.len(),
+            preview
+        );
+    }
+    
+    // Truncate if too large
+    if output.len() > MAX_TOOL_OUTPUT_BYTES {
+        let truncated: String = output.chars().take(MAX_TOOL_OUTPUT_BYTES).collect();
+        format!(
+            "{}...\n\n[Truncated: {} bytes total, showing first {}]",
+            truncated,
+            output.len(),
+            MAX_TOOL_OUTPUT_BYTES
+        )
+    } else {
+        output
+    }
+}

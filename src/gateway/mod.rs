@@ -804,6 +804,9 @@ async fn dispatch_text_message(
                 }
             };
 
+            // Sanitize the output (truncate large outputs, warn about garbage).
+            let output = tools::sanitize_tool_output(output);
+
             // Notify the client about the result.
             let result_frame = json!({
                 "type": "tool_result",

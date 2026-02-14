@@ -26,6 +26,7 @@ pub use helpers::{
     expand_tilde, VAULT_ACCESS_DENIED, command_references_credentials,
     init_sandbox, sandbox, run_sandboxed_command,
     set_vault, vault, SharedVault,
+    sanitize_tool_output,
 };
 
 // File operations
