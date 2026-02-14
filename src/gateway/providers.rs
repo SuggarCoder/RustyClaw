@@ -449,6 +449,136 @@ pub async fn validate_model_connection(
 
 // ── Provider-specific callers ───────────────────────────────────────────────
 
+/// Consume an SSE (Server-Sent Events) stream and reassemble it into
+/// an OpenAI-compatible JSON response structure.
+///
+/// This handles the case where a provider returns a streaming response
+/// even though we didn't request `"stream": true`.
+async fn consume_sse_stream(resp: reqwest::Response) -> Result<serde_json::Value> {
+    use futures_util::StreamExt;
+
+    let mut stream = resp.bytes_stream();
+    let mut buffer = String::new();
+
+    // Accumulated response fields
+    let mut content = String::new();
+    let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+    let mut finish_reason: Option<String> = None;
+    let mut usage: Option<serde_json::Value> = None;
+    let mut model = String::new();
+
+    'outer: while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.context("SSE stream read error")?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process complete SSE events (terminated by double newline)
+        while let Some(event_end) = buffer.find("\n\n") {
+            let event = buffer[..event_end].to_string();
+            buffer = buffer[event_end + 2..].to_string();
+
+            for line in event.lines() {
+                if let Some(data) = line.strip_prefix("data: ") {
+                    if data.trim() == "[DONE]" {
+                        // Stream complete — exit all loops
+                        break 'outer;
+                    }
+
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                        // Extract model name
+                        if let Some(m) = json.get("model").and_then(|v| v.as_str()) {
+                            model = m.to_string();
+                        }
+
+                        // Extract usage if present (usually in final chunk)
+                        if let Some(u) = json.get("usage") {
+                            if !u.is_null() {
+                                usage = Some(u.clone());
+                            }
+                        }
+
+                        // Process choices
+                        if let Some(choices) = json.get("choices").and_then(|v| v.as_array()) {
+                            for choice in choices {
+                                // Check finish_reason
+                                if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                                    finish_reason = Some(fr.to_string());
+                                }
+
+                                // Extract delta content
+                                if let Some(delta) = choice.get("delta") {
+                                    // Text content
+                                    if let Some(c) = delta.get("content").and_then(|v| v.as_str()) {
+                                        content.push_str(c);
+                                    }
+
+                                    // Tool calls (streamed incrementally)
+                                    if let Some(tc_array) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                                        for tc in tc_array {
+                                            let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+                                            // Ensure tool_calls vec is big enough
+                                            while tool_calls.len() <= index {
+                                                tool_calls.push(json!({
+                                                    "id": "",
+                                                    "type": "function",
+                                                    "function": { "name": "", "arguments": "" }
+                                                }));
+                                            }
+
+                                            // Update tool call fields
+                                            if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                                                tool_calls[index]["id"] = json!(id);
+                                            }
+                                            if let Some(func) = tc.get("function") {
+                                                if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                                                    tool_calls[index]["function"]["name"] = json!(name);
+                                                }
+                                                if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                                                    // Append to existing arguments
+                                                    let existing = tool_calls[index]["function"]["arguments"]
+                                                        .as_str()
+                                                        .unwrap_or("");
+                                                    tool_calls[index]["function"]["arguments"] =
+                                                        json!(format!("{}{}", existing, args));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Build a standard OpenAI-style response object
+    let mut message = json!({
+        "role": "assistant",
+        "content": if content.is_empty() { serde_json::Value::Null } else { json!(content) }
+    });
+
+    if !tool_calls.is_empty() {
+        message["tool_calls"] = json!(tool_calls);
+    }
+
+    let mut response = json!({
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": finish_reason.unwrap_or_else(|| "stop".to_string())
+        }]
+    });
+
+    if let Some(u) = usage {
+        response["usage"] = u;
+    }
+
+    Ok(response)
+}
+
 /// Call an OpenAI-compatible `/chat/completions` endpoint (non-streaming)
 /// with tool definitions.  Returns structured text + tool calls.
 pub async fn call_openai_with_tools(
@@ -502,10 +632,24 @@ pub async fn call_openai_with_tools(
         anyhow::bail!("Provider returned {} — {}", status, text);
     }
 
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .context("Invalid JSON from provider")?;
+    // Check if the server returned a streaming response (SSE) despite us
+    // not requesting one.  Some providers (e.g. GitHub Copilot) may force
+    // streaming.  If so, consume the SSE stream and reassemble the response.
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let data: serde_json::Value = if content_type.contains("text/event-stream") {
+        // Server is streaming — parse SSE events.
+        consume_sse_stream(resp).await?
+    } else {
+        // Normal JSON response.
+        resp.json()
+            .await
+            .context("Invalid JSON from provider")?
+    };
 
     let choice = &data["choices"][0];
     let message = &choice["message"];
