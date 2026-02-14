@@ -733,13 +733,6 @@ async fn dispatch_text_message(
             }
         }
 
-        // Debug: signal that we're about to call the model
-        let _ = writer
-            .send(Message::Text(
-                json!({"type": "debug", "message": format!("Calling {} model...", resolved.provider)}).to_string().into()
-            ))
-            .await;
-
         let result = if resolved.provider == "anthropic" {
             providers::call_anthropic_with_tools(http, &resolved).await
         } else if resolved.provider == "google" {
@@ -747,13 +740,6 @@ async fn dispatch_text_message(
         } else {
             providers::call_openai_with_tools(http, &resolved).await
         };
-
-        // Debug: signal model returned
-        let _ = writer
-            .send(Message::Text(
-                json!({"type": "debug", "message": "Model response received"}).to_string().into()
-            ))
-            .await;
 
         let model_resp = match result {
             Ok(r) => r,

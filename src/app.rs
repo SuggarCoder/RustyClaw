@@ -1039,6 +1039,13 @@ impl App {
             return Ok(Some(Action::Update));
         }
 
+        // ── Handle debug frames (suppress or log) ────────────
+        if frame_type == Some("debug") {
+            // Debug frames are internal — don't display to user
+            // Could optionally log to a debug pane or file in the future
+            return Ok(Some(Action::Update));
+        }
+
         // ── Handle info/notification frames ──────────────────
         if frame_type == Some("info") {
             let message = parsed
