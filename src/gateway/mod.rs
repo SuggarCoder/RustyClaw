@@ -676,7 +676,10 @@ async fn dispatch_text_message(
     let original_api_key = resolved.api_key.clone();
 
     // ── Agentic tool loop ───────────────────────────────────────────
-    const MAX_TOOL_ROUNDS: usize = 25;
+    // No hard limit — the model will stop when it's done. The user can
+    // cancel by closing the connection or pressing Ctrl+C in the TUI.
+    // We use a very high limit as a safety net against infinite loops.
+    const MAX_TOOL_ROUNDS: usize = 500;
 
     let context_limit = helpers::context_window_for_model(&resolved.model);
 
@@ -843,7 +846,7 @@ async fn dispatch_text_message(
     let frame = json!({
         "type": "error",
         "ok": false,
-        "message": "Tool loop limit reached — stopping.",
+        "message": format!("Safety limit reached ({} tool rounds) — stopping to prevent infinite loop.", MAX_TOOL_ROUNDS),
     });
     writer
         .send(Message::Text(frame.to_string().into()))
