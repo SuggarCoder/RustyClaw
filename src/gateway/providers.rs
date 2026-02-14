@@ -34,13 +34,25 @@ pub async fn send_response_done(writer: &mut WsWriter) -> Result<()> {
 /// Attach GitHub-Copilot-required IDE headers to a request builder.
 ///
 /// Uses VS Code / Copilot Chat identifiers that GitHub's API recognizes.
+/// The `messages` slice is used to determine whether this is a user-initiated
+/// or agent-initiated request (for the `X-Initiator` header).
 pub fn apply_copilot_headers(
     builder: reqwest::RequestBuilder,
     provider: &str,
+    messages: &[ChatMessage],
 ) -> reqwest::RequestBuilder {
     if !providers::needs_copilot_session(provider) {
         return builder;
     }
+    // Determine X-Initiator based on the last message role.
+    // If the last message is from the user, it's user-initiated.
+    // If the last message is from assistant/tool, it's agent-initiated.
+    let is_agent_call = messages
+        .last()
+        .map(|m| m.role != "user")
+        .unwrap_or(false);
+    let x_initiator = if is_agent_call { "agent" } else { "user" };
+
     // GitHub Copilot requires recognized IDE headers.
     // Using VS Code / Copilot Chat identifiers that the API accepts.
     builder
@@ -48,7 +60,8 @@ pub fn apply_copilot_headers(
         .header("Editor-Version", "vscode/1.107.0")
         .header("Editor-Plugin-Version", "copilot-chat/0.35.0")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("openai-intent", "conversation-panel")
+        .header("Openai-Intent", "conversation-edits")
+        .header("X-Initiator", x_initiator)
 }
 
 /// Merge an incoming chat request with the gateway's model context.
@@ -402,7 +415,7 @@ pub async fn validate_model_connection(
         if let Some(ref key) = effective_key {
             builder = builder.bearer_auth(key);
         }
-        builder = apply_copilot_headers(builder, &ctx.provider);
+        builder = apply_copilot_headers(builder, &ctx.provider, &[]);
         builder
             .send()
             .await
@@ -585,16 +598,6 @@ async fn consume_sse_stream(resp: reqwest::Response) -> Result<serde_json::Value
         let chunk = chunk_result.context("SSE stream read error")?;
         let chunk_str = String::from_utf8_lossy(&chunk);
         
-        // Debug: log raw SSE chunks to file
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/rustyclaw_sse_debug.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "--- CHUNK ---\n{}", chunk_str);
-        }
-        
         buffer.push_str(&chunk_str);
 
         // Process complete SSE events (terminated by double newline)
@@ -683,32 +686,12 @@ async fn consume_sse_stream(resp: reqwest::Response) -> Result<serde_json::Value
 
                         // Exit after processing all data in this chunk
                         if should_exit {
-                            // Debug: log exit reason
-                            if let Ok(mut f) = std::fs::OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open("/tmp/rustyclaw_sse_debug.log")
-                            {
-                                use std::io::Write;
-                                let _ = writeln!(f, "--- EXITING: finish_reason={:?}, tool_calls={} ---", finish_reason, tool_calls.len());
-                            }
                             break 'outer;
                         }
                     }
                 }
             }
         }
-    }
-
-    // Debug: log final state
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/rustyclaw_sse_debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "--- FINAL: content_len={}, tool_calls={}, finish_reason={:?} ---", 
-            content.len(), tool_calls.len(), finish_reason);
     }
 
     // Build a standard OpenAI-style response object
@@ -768,6 +751,8 @@ pub async fn call_openai_with_tools(
     let mut body = json!({
         "model": req.model,
         "messages": messages,
+        "stream": true,
+        "stream_options": { "include_usage": true },
     });
     if !tool_defs.is_empty() {
         body["tools"] = json!(tool_defs);
@@ -777,34 +762,12 @@ pub async fn call_openai_with_tools(
     if let Some(ref key) = req.api_key {
         builder = builder.bearer_auth(key);
     }
-    builder = apply_copilot_headers(builder, &req.provider);
-
-    // Debug: log before HTTP request
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/rustyclaw_sse_debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "=== SENDING REQUEST to {} ===", url);
-        let _ = writeln!(f, "Model: {}, Messages: {}", req.model, req.messages.len());
-    }
+    builder = apply_copilot_headers(builder, &req.provider, &req.messages);
 
     let resp = builder
         .send()
         .await
         .context("HTTP request to model provider failed")?;
-
-    // Debug: log after HTTP response
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/rustyclaw_sse_debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "=== GOT RESPONSE: {} ===", resp.status());
-        let _ = writeln!(f, "Content-Type: {:?}", resp.headers().get(reqwest::header::CONTENT_TYPE));
-    }
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -821,42 +784,13 @@ pub async fn call_openai_with_tools(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // Debug: log content type detection
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/rustyclaw_sse_debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "Content-Type str: '{}', is_sse: {}", content_type, content_type.contains("text/event-stream"));
-    }
-
     // Detect SSE by content-type (may include charset, e.g., "text/event-stream; charset=utf-8")
     let data: serde_json::Value = if content_type.contains("text/event-stream") {
-        // Debug: entering SSE path
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/rustyclaw_sse_debug.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(f, ">>> Entering consume_sse_stream");
-        }
         // Server is streaming — parse SSE events.
         consume_sse_stream(resp).await?
     } else {
         // Normal JSON response — but check if it actually looks like SSE
         let text = resp.text().await.context("Failed to read response body")?;
-        
-        // Debug: log text path
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/rustyclaw_sse_debug.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(f, ">>> Text path, starts_with_data: {}, len: {}", text.trim_start().starts_with("data:"), text.len());
-        }
         
         if text.trim_start().starts_with("data:") {
             // Looks like SSE despite content-type — parse it
@@ -897,20 +831,6 @@ pub async fn call_openai_with_tools(
     if let Some(usage) = data.get("usage") {
         result.prompt_tokens = usage["prompt_tokens"].as_u64();
         result.completion_tokens = usage["completion_tokens"].as_u64();
-    }
-
-    // Debug: log final parsed result
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/rustyclaw_sse_debug.log")
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "=== PARSED RESULT: text_len={}, tool_calls={} ===", 
-            result.text.len(), result.tool_calls.len());
-        for tc in &result.tool_calls {
-            let _ = writeln!(f, "  Tool: {} (id: {})", tc.name, tc.id);
-        }
     }
 
     Ok(result)

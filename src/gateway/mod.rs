@@ -757,17 +757,6 @@ async fn dispatch_text_message(
             }
         };
 
-        // Debug: log what we got
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/rustyclaw_sse_debug.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "[GATEWAY] Got response: text_len={}, tool_calls={}", 
-                model_resp.text.len(), model_resp.tool_calls.len());
-        }
-
         // Stream any text content to the client.
         if !model_resp.text.is_empty() {
             providers::send_chunk(writer, &model_resp.text).await?;
@@ -775,15 +764,6 @@ async fn dispatch_text_message(
 
         if model_resp.tool_calls.is_empty() {
             // No tool calls — the model is done.
-            // Debug: log completion
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/rustyclaw_sse_debug.log")
-            {
-                use std::io::Write;
-                let _ = writeln!(f, "[GATEWAY] Sending response_done, returning");
-            }
             providers::send_response_done(writer).await?;
             return Ok(());
         }
