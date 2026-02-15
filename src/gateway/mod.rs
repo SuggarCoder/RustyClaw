@@ -906,6 +906,49 @@ async fn dispatch_text_message(
         if model_resp.tool_calls.is_empty() {
             // No tool calls requested
             if finish_reason == "stop" || finish_reason == "end_turn" {
+                // ── Auto-continuation for incomplete intent ─────────────
+                // Sometimes the model narrates what it plans to do ("Let me check...")
+                // but returns finish_reason=stop without making a tool call.
+                // This is common with large contexts or certain API proxies.
+                // Detect this and prompt the model to continue.
+                const INTENT_PATTERNS: &[&str] = &[
+                    "Let me ",
+                    "I'll ",
+                    "I will ",
+                    "Now let me ",
+                    "Let's ",
+                    "Now I'll ",
+                    "I need to ",
+                    "First, let me ",
+                    "First let me ",
+                ];
+                let text_suggests_action = INTENT_PATTERNS
+                    .iter()
+                    .any(|p| model_resp.text.contains(p));
+
+                if text_suggests_action {
+                    // Model said it would act but didn't — prompt continuation
+                    eprintln!(
+                        "[Gateway] Detected incomplete intent ({} chars text, no tool calls), prompting continuation",
+                        model_resp.text.len()
+                    );
+
+                    // Send the partial text to the client so they see it
+                    if !model_resp.text.is_empty() && resolved.provider != "anthropic" {
+                        providers::send_chunk(writer, &model_resp.text).await?;
+                    }
+
+                    // Append assistant message and continuation prompt
+                    resolved.messages.push(ChatMessage::text("assistant", &model_resp.text));
+                    resolved.messages.push(ChatMessage::text(
+                        "user",
+                        "Continue. Execute the action you described.",
+                    ));
+
+                    // Don't send response_done — continue the tool loop
+                    continue;
+                }
+
                 // Model explicitly finished — we're done
                 providers::send_response_done(writer).await?;
                 return Ok(());
