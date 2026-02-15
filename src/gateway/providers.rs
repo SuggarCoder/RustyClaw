@@ -978,7 +978,7 @@ pub async fn call_openai_with_tools(
 pub async fn call_anthropic_with_tools(
     http: &reqwest::Client,
     req: &ProviderRequest,
-    writer: Option<&mut WsWriter>,
+    mut writer: Option<&mut WsWriter>,
 ) -> Result<ModelResponse> {
     use futures_util::StreamExt;
 
@@ -1031,6 +1031,13 @@ pub async fn call_anthropic_with_tools(
         body["tools"] = json!(tool_defs);
     }
 
+    // Send immediate "waiting" indicator BEFORE the HTTP request
+    // This is where the model processing time is spent
+    if let Some(ref mut w) = writer {
+        let waiting_frame = json!({ "type": "stream_start" });
+        let _ = w.send(Message::Text(waiting_frame.to_string().into())).await;
+    }
+
     let api_key = req.api_key.as_deref().unwrap_or("");
     let resp = http
         .post(&url)
@@ -1055,11 +1062,6 @@ pub async fn call_anthropic_with_tools(
 
     // Streaming path — parse SSE and forward to TUI
     let writer = writer.unwrap();
-    
-    // Send an immediate "waiting" indicator so the TUI knows we're connected
-    // and waiting for the model to start responding
-    let waiting_frame = json!({ "type": "stream_start" });
-    let _ = writer.send(Message::Text(waiting_frame.to_string().into())).await;
     
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
