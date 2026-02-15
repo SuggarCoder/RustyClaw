@@ -1055,6 +1055,12 @@ pub async fn call_anthropic_with_tools(
 
     // Streaming path — parse SSE and forward to TUI
     let writer = writer.unwrap();
+    
+    // Send an immediate "waiting" indicator so the TUI knows we're connected
+    // and waiting for the model to start responding
+    let waiting_frame = json!({ "type": "stream_start" });
+    let _ = writer.send(Message::Text(waiting_frame.to_string().into())).await;
+    
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
     

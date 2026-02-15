@@ -1073,6 +1073,14 @@ impl App {
             return Ok(Some(Action::Update));
         }
 
+        // ── Handle stream start (API connected, waiting for response) ──
+        if frame_type == Some("stream_start") {
+            // Show that we're connected and waiting for the model
+            self.state.loading_line = Some("⏳ Waiting for response...".to_string());
+            self.state.streaming_started = Some(std::time::Instant::now());
+            return Ok(Some(Action::Update));
+        }
+
         // ── Handle extended thinking frames (Anthropic) ──────
         if frame_type == Some("thinking_start") {
             // Show thinking indicator in the loading line
