@@ -324,7 +324,7 @@ async fn process_incoming_message(
 
     for _round in 0..MAX_TOOL_ROUNDS {
         let result = if resolved.provider == "anthropic" {
-            providers::call_anthropic_with_tools(http, &resolved).await
+            providers::call_anthropic_with_tools(http, &resolved, None).await
         } else if resolved.provider == "google" {
             providers::call_google_with_tools(http, &resolved).await
         } else {
