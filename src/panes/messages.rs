@@ -511,6 +511,24 @@ impl Pane for MessagesPane {
             return Ok(());
         }
 
+        // Debug: log message count on each draw
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/rustyclaw-tui.log")
+        {
+            use std::io::Write;
+            let last_content_len = state.messages.last().map(|m| m.content.len()).unwrap_or(0);
+            let _ = writeln!(
+                file,
+                "[{}] draw: messages={}, last_content_len={}, loading={:?}",
+                chrono::Utc::now().format("%H:%M:%S%.3f"),
+                state.messages.len(),
+                last_content_len,
+                state.loading_line.is_some()
+            );
+        }
+
         // Sync the tab-width setting so build_lines can read it.
         TAB_WIDTH.store(state.config.tab_width, std::sync::atomic::Ordering::Relaxed);
 
