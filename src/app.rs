@@ -134,6 +134,8 @@ pub struct App {
     hatching_page: Option<Hatching>,
     /// Whether we're currently showing the hatching animation
     showing_hatching: bool,
+    /// Password to forward to gateway after connecting (from --password flag)
+    deferred_vault_password: Option<String>,
 }
 
 impl App {
@@ -146,6 +148,12 @@ impl App {
     pub fn with_password(config: Config, password: String) -> Result<Self> {
         let secrets_manager = SecretsManager::with_password(config.credentials_dir(), password);
         Self::build(config, secrets_manager)
+    }
+
+    /// Set a vault password to be sent to the gateway after connecting.
+    /// Used when --password is passed on the command line.
+    pub fn set_deferred_vault_password(&mut self, password: String) {
+        self.deferred_vault_password = Some(password);
     }
 
     fn build(config: Config, mut secrets_manager: SecretsManager) -> Result<Self> {
@@ -279,6 +287,7 @@ impl App {
             policy_picker: None,
             hatching_page,
             showing_hatching,
+            deferred_vault_password: None,
         })
     }
 
@@ -933,6 +942,11 @@ impl App {
                     self.state.messages.push(DisplayMessage::warning(detail));
                 }
                 "vault_locked" => {
+                    // If we have a deferred password (from --password flag),
+                    // forward it automatically instead of prompting.
+                    if let Some(pw) = self.deferred_vault_password.take() {
+                        return Ok(Some(Action::GatewayUnlockVault(pw)));
+                    }
                     self.state.gateway_status = GatewayStatus::VaultLocked;
                     self.state.messages.push(DisplayMessage::warning(
                         "Gateway vault is locked — enter password to unlock.",

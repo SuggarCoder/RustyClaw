@@ -522,16 +522,14 @@ async fn main() -> Result<()> {
             if let Some(url) = &args.url {
                 config.gateway_url = Some(url.clone());
             }
-            let mut app = if config.secrets_password_protected {
-                let pw = if let Some(pw) = args.password {
-                    pw
-                } else {
-                    prompt_password("Enter secrets vault password: ")?
-                };
-                App::with_password(config, pw)?
-            } else {
-                App::new(config)?
-            };
+            // Password handling has moved to the gateway. The TUI connects
+            // and, if the vault is locked, the gateway sends a vault_locked
+            // frame which triggers an interactive unlock prompt in the TUI.
+            // A password passed via --password is forwarded after connect.
+            let mut app = App::new(config)?;
+            if let Some(pw) = args.password {
+                app.set_deferred_vault_password(pw);
+            }
             app.run().await?;
         }
 
