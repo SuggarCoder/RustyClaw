@@ -57,6 +57,9 @@ thiserror = "2.0"
 # Secrets management (encrypted on-disk vault)
 securestore = "0.100.0"
 
+# OpenSSL with vendored feature for cross-compilation (used by securestore + reqwest native-tls)
+openssl-sys = { version = "0.9", features = ["vendored"] }
+
 # TOTP 2FA support
 totp-rs = { version = "5.7", features = ["gen_secret", "otpauth"] }
 
@@ -78,8 +81,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 futures-util = "0.3"
 tokio-tungstenite = "0.28"
 # Note: 0.13+ renamed rustls-tls to rustls
-# native-tls-vendored enables vendored OpenSSL for cross-compilation
-reqwest = { version = "0.13", features = ["json", "rustls", "stream", "blocking", "form", "native-tls-vendored"], default-features = false }
+reqwest = { version = "0.13", features = ["json", "rustls", "stream", "blocking", "form"], default-features = false }
 url = "2.5"
 tui-input = { version = "0.15", optional = true }
 strum = { version = "0.27", features = ["derive"] }
@@ -105,7 +107,8 @@ httpdate = "1.0"
 
 # Matrix messenger support (optional)
 # Features: e2e-encryption (default), sqlite (persistence), rustls-tls (TLS)
-matrix-sdk = { version = "0.10", default-features = false, features = ["e2e-encryption", "sqlite"], optional = true }
+# rustls-tls is required when default-features = false
+matrix-sdk = { version = "0.10", default-features = false, features = ["e2e-encryption", "sqlite", "rustls-tls"], optional = true }
 
 # Signal messenger support - DISABLED for crates.io publishing
 # Signal requires presage from git which isn't compatible with crates.io.
