@@ -499,6 +499,26 @@ async fn handle_connection(
             //
             // For Copilot providers, exchange the OAuth token for a session
             // token first — the probe must use the session token too.
+            //
+            // If the cached model context has no API key, try fetching it
+            // from the vault (it may have been stored since startup).
+            let probe_ctx = if ctx.api_key.is_none() {
+                if let Some(key_name) = crate_providers::secret_key_for_provider(&ctx.provider) {
+                    let mut v = vault.lock().await;
+                    if let Ok(Some(key)) = v.get_secret(key_name, true) {
+                        let mut updated = (**ctx).clone();
+                        updated.api_key = Some(key);
+                        std::sync::Arc::new(updated)
+                    } else {
+                        ctx.clone()
+                    }
+                } else {
+                    ctx.clone()
+                }
+            } else {
+                ctx.clone()
+            };
+
             writer
                 .send(Message::Text(
                     helpers::status_frame("model_connecting", &format!("Probing {} …", ctx.base_url))
@@ -507,7 +527,7 @@ async fn handle_connection(
                 .await
                 .context("Failed to send model_connecting status")?;
 
-            match providers::validate_model_connection(&http, ctx, copilot_session.as_deref()).await {
+            match providers::validate_model_connection(&http, &probe_ctx, copilot_session.as_deref()).await {
                 ProbeResult::Ready => {
                     writer
                         .send(Message::Text(
@@ -1030,6 +1050,18 @@ async fn dispatch_text_message(
             return Ok(());
         }
     };
+
+    // If we still don't have an API key, try fetching it fresh from
+    // the vault.  This handles the case where a key was stored after
+    // the gateway started (e.g. user entered it via the TUI dialog).
+    if resolved.api_key.is_none() {
+        if let Some(key_name) = crate::providers::secret_key_for_provider(&resolved.provider) {
+            let mut v = vault.lock().await;
+            if let Ok(Some(key)) = v.get_secret(key_name, true) {
+                resolved.api_key = Some(key);
+            }
+        }
+    }
 
     // Store the original API key for non-Copilot providers.
     // For Copilot, we'll refresh the session token on each loop iteration.
