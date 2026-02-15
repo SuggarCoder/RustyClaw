@@ -9,6 +9,7 @@ use rustyclaw::onboard::run_onboard_wizard;
 use rustyclaw::providers;
 use rustyclaw::secrets::SecretsManager;
 use rustyclaw::skills::SkillManager;
+use std::path::PathBuf;
 use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
