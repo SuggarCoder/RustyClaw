@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::io::Write;
+use std::fs::OpenOptions;
 
 use anyhow::Result;
 use futures_util::stream::SplitSink;
@@ -31,6 +33,17 @@ use crate::secrets::SecretsManager;
 use crate::skills::SkillManager;
 use crate::soul::SoulManager;
 use crate::tui::{Event, EventResponse, Tui};
+
+/// Debug log to file (avoids TUI interference)
+fn debug_log(msg: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/rustyclaw-tui.log")
+    {
+        let _ = writeln!(file, "[{}] {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+    }
+}
 
 /// Type alias for the client-side WebSocket write half.
 type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
@@ -879,7 +892,7 @@ impl App {
             .and_then(|v| v.get("type").and_then(|t| t.as_str()));
 
         // Debug: log all incoming frames
-        eprintln!("[TUI] Received frame: type={:?}, len={}", frame_type, text.len());
+        debug_log(&format!("Received frame: type={:?}, len={}", frame_type, text.len()));
 
         // ── Handle status frames from the gateway ────────────
         if frame_type == Some("status") {
@@ -1117,11 +1130,11 @@ impl App {
                 .and_then(|v| v.get("delta").and_then(|d| d.as_str()))
                 .unwrap_or("");
 
-            eprintln!("[TUI] Received chunk: {} chars, delta='{}'", delta.len(), &delta[..delta.len().min(50)]);
+            debug_log(&format!("Received chunk: {} chars, delta='{}'", delta.len(), &delta[..delta.len().min(50)]));
 
             if self.streaming_response.is_none() {
                 // First chunk — clear the loading spinner and start accumulating.
-                eprintln!("[TUI] First chunk - initializing streaming response");
+                debug_log("First chunk - initializing streaming response");
                 self.state.loading_line = None;
                 self.streaming_response = Some(String::new());
                 self.state.streaming_started = Some(std::time::Instant::now());
