@@ -150,6 +150,17 @@ impl App {
         Self::build(config, secrets_manager)
     }
 
+    /// Create the app with the local vault in a locked state.
+    ///
+    /// Used when the vault is password-protected but no password was
+    /// given on the CLI.  The local SecretsManager will not attempt
+    /// to decrypt the vault, avoiding repeated (expensive) failures
+    /// on every render frame.
+    pub fn new_locked(config: Config) -> Result<Self> {
+        let secrets_manager = SecretsManager::locked(config.credentials_dir());
+        Self::build(config, secrets_manager)
+    }
+
     /// Set a vault password to be sent to the gateway after connecting.
     /// Used when --password is passed on the command line.
     pub fn set_deferred_vault_password(&mut self, password: String) {
