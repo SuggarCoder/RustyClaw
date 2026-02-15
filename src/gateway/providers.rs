@@ -11,6 +11,58 @@ use super::WsWriter;
 use crate::providers;
 use crate::tools;
 
+// ── Connection retry helper ─────────────────────────────────────────────────
+
+/// Send an HTTP request with automatic retry on connection errors.
+///
+/// On the first attempt, uses the provided client (which tries both IPv4
+/// and IPv6 per OS defaults).  If that fails with a connection error
+/// (e.g. IPv6 unreachable), retries once with an IPv4-only client.
+///
+/// This avoids hardcoding an IPv4 preference while still recovering from
+/// broken IPv6 connectivity — a common issue with some providers.
+pub async fn send_with_retry(
+    builder: reqwest::RequestBuilder,
+) -> Result<reqwest::Response> {
+    match builder.try_clone() {
+        Some(cloned) => {
+            match builder.send().await {
+                Ok(resp) => Ok(resp),
+                Err(e) if e.is_connect() => {
+                    eprintln!(
+                        "[Gateway] Connection failed ({}), retrying with IPv4-only…",
+                        e
+                    );
+                    // Build an IPv4-only client for the retry
+                    let ipv4_client = reqwest::Client::builder()
+                        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+                        .build()
+                        .context("Failed to build IPv4 client")?;
+                    // Re-issue the request through the IPv4 client.
+                    // try_clone gave us a copy of the original request builder,
+                    // but it's bound to the original client.  We need to
+                    // rebuild from the cloned builder's inner request.
+                    // Unfortunately RequestBuilder::try_clone clones the
+                    // builder but keeps the same client.  So we send via
+                    // the clone which still uses the default client — not
+                    // helpful.  Instead, we extract the Request and execute
+                    // it on the new client.
+                    let request = cloned.build().context("Failed to rebuild request")?;
+                    ipv4_client
+                        .execute(request)
+                        .await
+                        .context("IPv4 retry also failed")
+                }
+                Err(e) => Err(e).context("HTTP request failed"),
+            }
+        }
+        None => {
+            // Request body is not cloneable (streaming) — can't retry
+            builder.send().await.context("HTTP request failed")
+        }
+    }
+}
+
 // ── Streaming helpers ───────────────────────────────────────────────────────
 
 /// Send a single `{"type": "chunk", "delta": "..."}` frame.
@@ -446,13 +498,11 @@ pub async fn validate_model_connection(
             "max_tokens": 1,
             "messages": [{"role": "user", "content": "Hi"}],
         });
-        http.post(&url)
+        let builder = http.post(&url)
             .header("x-api-key", ctx.api_key.as_deref().unwrap_or(""))
             .header("anthropic-version", "2023-06-01")
-            .json(&body)
-            .send()
-            .await
-            .context("Probe request to Anthropic failed")
+            .json(&body);
+        send_with_retry(builder).await
     } else if ctx.provider == "google" {
         // Google: check the model metadata endpoint (no chat needed).
         let key = ctx.api_key.as_deref().unwrap_or("");
@@ -462,10 +512,7 @@ pub async fn validate_model_connection(
             ctx.model,
             key,
         );
-        http.get(&url)
-            .send()
-            .await
-            .context("Probe request to Google failed")
+        send_with_retry(http.get(&url)).await
     } else {
         // OpenAI-compatible: GET /models — lightweight auth check.
         let url = format!("{}/models", ctx.base_url.trim_end_matches('/'));
@@ -474,10 +521,7 @@ pub async fn validate_model_connection(
             builder = builder.bearer_auth(key);
         }
         builder = apply_copilot_headers(builder, &ctx.provider, &[]);
-        builder
-            .send()
-            .await
-            .context("Probe request to provider failed")
+        send_with_retry(builder).await
     };
 
     match result {
@@ -883,10 +927,7 @@ pub async fn call_openai_with_tools(
     }
     builder = apply_copilot_headers(builder, &req.provider, &req.messages);
 
-    let resp = builder
-        .send()
-        .await
-        .context("HTTP request to model provider failed")?;
+    let resp = send_with_retry(builder).await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -1039,14 +1080,12 @@ pub async fn call_anthropic_with_tools(
     }
 
     let api_key = req.api_key.as_deref().unwrap_or("");
-    let resp = http
+    let builder = http
         .post(&url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
-        .json(&body)
-        .send()
-        .await
-        .context("HTTP request to Anthropic failed")?;
+        .json(&body);
+    let resp = send_with_retry(builder).await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -1325,12 +1364,10 @@ pub async fn call_google_with_tools(
         body["tools"] = json!([{ "function_declarations": tool_defs }]);
     }
 
-    let resp = http
+    let builder = http
         .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .context("HTTP request to Google failed")?;
+        .json(&body);
+    let resp = send_with_retry(builder).await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
