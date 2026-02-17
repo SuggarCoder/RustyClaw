@@ -220,6 +220,31 @@ impl Config {
             .unwrap_or_else(|| self.workspace_dir().join("skills"))
     }
 
+    /// Returns all skills directories in priority order (lowest to highest).
+    /// Order: bundled OpenClaw → user OpenClaw → user RustyClaw
+    pub fn skills_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+
+        // OpenClaw bundled skills (npm global install)
+        let openclaw_bundled = PathBuf::from("/usr/lib/node_modules/openclaw/skills");
+        if openclaw_bundled.exists() {
+            dirs.push(openclaw_bundled);
+        }
+
+        // OpenClaw user skills
+        if let Some(home) = dirs::home_dir() {
+            let openclaw_user = home.join(".openclaw/workspace/skills");
+            if openclaw_user.exists() {
+                dirs.push(openclaw_user);
+            }
+        }
+
+        // RustyClaw user skills (highest priority)
+        dirs.push(self.skills_dir());
+
+        dirs
+    }
+
     /// Logs directory.
     pub fn logs_dir(&self) -> PathBuf {
         self.settings_dir.join("logs")
@@ -297,8 +322,8 @@ impl Config {
         let new_workspace = self.workspace_dir();
 
         let has_legacy = old_secrets.exists() || old_soul.exists();
-        let already_migrated = new_creds.join("secrets.json").exists()
-            || new_workspace.join("SOUL.md").exists();
+        let already_migrated =
+            new_creds.join("secrets.json").exists() || new_workspace.join("SOUL.md").exists();
 
         if !has_legacy || already_migrated {
             return Ok(());

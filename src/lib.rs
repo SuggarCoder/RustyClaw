@@ -9,6 +9,7 @@ pub mod cron;
 pub mod daemon;
 #[cfg(feature = "tui")]
 pub mod dialogs;
+pub mod error;
 pub mod gateway;
 pub mod memory;
 pub mod messengers;

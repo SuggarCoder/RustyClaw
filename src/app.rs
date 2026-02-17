@@ -1,6 +1,4 @@
 use std::path::PathBuf;
-use std::io::Write;
-use std::fs::OpenOptions;
 
 use anyhow::Result;
 use futures_util::stream::SplitSink;
@@ -11,6 +9,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use tracing::{debug, warn};
 
 use crate::action::Action;
 use crate::commands::{handle_command, CommandAction, CommandContext};
@@ -33,17 +32,6 @@ use crate::secrets::SecretsManager;
 use crate::skills::SkillManager;
 use crate::soul::SoulManager;
 use crate::tui::{Event, EventResponse, Tui};
-
-/// Debug log to file (avoids TUI interference)
-fn debug_log(msg: &str) {
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/rustyclaw-tui.log")
-    {
-        let _ = writeln!(file, "[{}] {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
-    }
-}
 
 /// Type alias for the client-side WebSocket write half.
 type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
@@ -83,6 +71,14 @@ impl SharedState {
     }
 }
 
+/// Application state for the TUI.
+///
+/// Fields are grouped by concern:
+/// - Core: `state` (SharedState), pages, header, footer
+/// - Connection: `ws_sink`, `reader_task`, `gateway_status`
+/// - Dialogs: All `*_dialog` and `show_*_dialog` fields
+/// - Streaming: `streaming_response`, `loading_line`, `streaming_started`
+/// - Special: `hatching_page`, `deferred_vault_password`, `cached_secrets`
 pub struct App {
     state: SharedState,
     pages: Vec<Box<dyn Page>>,
@@ -190,25 +186,8 @@ impl App {
         // 2. User OpenClaw skills (~/.openclaw/workspace/skills)
         // 3. User RustyClaw skills (~/.rustyclaw/workspace/skills)
         // 4. Configured skills_dir (if different)
-        let mut skills_dirs = Vec::new();
-
-        // OpenClaw bundled skills (npm global install)
-        let openclaw_bundled = PathBuf::from("/usr/lib/node_modules/openclaw/skills");
-        if openclaw_bundled.exists() {
-            skills_dirs.push(openclaw_bundled);
-        }
-
-        // OpenClaw user skills
-        if let Some(home) = dirs::home_dir() {
-            let openclaw_user = home.join(".openclaw/workspace/skills");
-            if openclaw_user.exists() {
-                skills_dirs.push(openclaw_user);
-            }
-        }
-
-        // RustyClaw user skills (primary)
-        let rustyclaw_skills = config.skills_dir();
-        skills_dirs.push(rustyclaw_skills);
+        // Use consolidated skills_dirs from config (includes OpenClaw fallback dirs)
+        let skills_dirs = config.skills_dirs();
 
         let mut skill_manager = SkillManager::with_dirs(skills_dirs);
         let _ = skill_manager.load_skills();
@@ -914,7 +893,7 @@ impl App {
             .and_then(|v| v.get("type").and_then(|t| t.as_str()));
 
         // Debug: log all incoming frames
-        debug_log(&format!("Received frame: type={:?}, len={}", frame_type, text.len()));
+        debug!(frame_type = ?frame_type, len = text.len(), "Received frame");
 
         // ── Handle status frames from the gateway ────────────
         if frame_type == Some("status") {
@@ -1341,11 +1320,11 @@ impl App {
                 .and_then(|v| v.get("delta").and_then(|d| d.as_str()))
                 .unwrap_or("");
 
-            debug_log(&format!("Received chunk: {} chars, delta='{}'", delta.len(), &delta[..delta.len().min(50)]));
+            debug!(delta_len = delta.len(), delta_preview = &delta[..delta.len().min(50)], "Received chunk");
 
             if self.streaming_response.is_none() {
                 // First chunk — clear the loading spinner and start accumulating.
-                debug_log("First chunk - initializing streaming response");
+                debug!("First chunk - initializing streaming response");
                 self.state.loading_line = None;
                 self.streaming_response = Some(String::new());
                 self.state.streaming_started = Some(std::time::Instant::now());
@@ -1357,19 +1336,19 @@ impl App {
 
             if let Some(ref mut buf) = self.streaming_response {
                 buf.push_str(delta);
-                debug_log(&format!("Buffer now {} chars", buf.len()));
+                debug!(buf_len = buf.len(), "Buffer update");
 
                 // During hatching, just accumulate — don't push to messages.
                 if !self.showing_hatching {
                     // Update the last assistant message with accumulated text.
                     if let Some(last) = self.state.messages.last_mut() {
                         last.update_content(buf.clone());
-                        debug_log(&format!("Updated last message to {} chars", last.content.len()));
+                        debug!(content_len = last.content.len(), "Updated last message");
                     } else {
-                        debug_log("WARNING: No last message to update!");
+                        warn!("No last message to update!");
                     }
                 } else {
-                    debug_log("Hatching mode - not updating messages");
+                    debug!("Hatching mode - not updating messages");
                 }
             }
 
@@ -1383,7 +1362,7 @@ impl App {
             self.state.streaming_started = None;
 
             if let Some(buf) = self.streaming_response.take() {
-                debug_log(&format!("response_done: buf len={}, showing_hatching={}", buf.len(), self.showing_hatching));
+                debug!(buf_len = buf.len(), showing_hatching = self.showing_hatching, "Response done");
                 
                 // During hatching, deliver the full accumulated text
                 // to the hatching page instead of the messages pane.
@@ -1399,13 +1378,13 @@ impl App {
 
                 // Trim trailing whitespace from the final message.
                 let trimmed = buf.trim_end().to_string();
-                debug_log(&format!("response_done: trimmed len={}, messages count={}", trimmed.len(), self.state.messages.len()));
+                debug!(trimmed_len = trimmed.len(), messages_count = self.state.messages.len(), "Response done");
                 
                 if let Some(last) = self.state.messages.last_mut() {
-                    debug_log(&format!("response_done: last message role={:?}", last.role));
+                    debug!(role = ?last.role, "Response done - last message role");
                     if matches!(last.role, crate::panes::MessageRole::Assistant) {
                         last.content = trimmed.clone();
-                        debug_log(&format!("response_done: set content to {} chars", trimmed.len()));
+                        debug!(content_len = trimmed.len(), "Response done - set content");
                     }
                 }
 
@@ -1416,7 +1395,7 @@ impl App {
                     self.save_history();
                 }
             } else {
-                debug_log("response_done: no streaming_response buffer!");
+                warn!("Response done: no streaming_response buffer!");
             }
             return Ok(Some(Action::Update));
         }

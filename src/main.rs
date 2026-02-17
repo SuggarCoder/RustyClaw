@@ -13,6 +13,7 @@ use rustyclaw::secrets::SecretsManager;
 use rustyclaw::skills::SkillManager;
 use std::path::PathBuf;
 use tokio_tungstenite::tungstenite::Message;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use url::Url;
 
 // ── Top-level CLI ───────────────────────────────────────────────────────────
@@ -407,6 +408,14 @@ async fn main() -> Result<()> {
 
     // Initialise colour output (respects --no-color / NO_COLOR).
     rustyclaw::theme::init_color(cli.common.no_color);
+
+    // Initialize tracing for structured logging
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_target(true).with_thread_ids(true))
+        .with(filter)
+        .init();
 
     let config_path = cli.common.config_path();
     let mut config = Config::load(config_path)?;
@@ -822,19 +831,8 @@ async fn main() -> Result<()> {
                     let cancel = CancellationToken::new();
 
                     // Load skills for the gateway from multiple directories.
-                    // Order: bundled (lowest priority) → user OpenClaw → user RustyClaw (highest)
-                    let mut skills_dirs = Vec::new();
-                    let openclaw_bundled = std::path::PathBuf::from("/usr/lib/node_modules/openclaw/skills");
-                    if openclaw_bundled.exists() {
-                        skills_dirs.push(openclaw_bundled);
-                    }
-                    if let Some(home) = dirs::home_dir() {
-                        let openclaw_user = home.join(".openclaw/workspace/skills");
-                        if openclaw_user.exists() {
-                            skills_dirs.push(openclaw_user);
-                        }
-                    }
-                    skills_dirs.push(config.skills_dir());
+                    // Uses consolidated skills_dirs from config.
+                    let skills_dirs = config.skills_dirs();
                     
                     let mut sm = SkillManager::with_dirs(skills_dirs);
                     if let Err(e) = sm.load_skills() {
@@ -853,19 +851,8 @@ async fn main() -> Result<()> {
 
         // ── Skills sub-commands ─────────────────────────────────
         Commands::Skills(sub) => {
-            // Use multiple directories for skills commands too
-            let mut skills_dirs = Vec::new();
-            let openclaw_bundled = std::path::PathBuf::from("/usr/lib/node_modules/openclaw/skills");
-            if openclaw_bundled.exists() {
-                skills_dirs.push(openclaw_bundled);
-            }
-            if let Some(home) = dirs::home_dir() {
-                let openclaw_user = home.join(".openclaw/workspace/skills");
-                if openclaw_user.exists() {
-                    skills_dirs.push(openclaw_user);
-                }
-            }
-            skills_dirs.push(config.skills_dir());
+            // Use consolidated skills_dirs from config
+            let skills_dirs = config.skills_dirs();
             
             let mut sm = SkillManager::with_dirs(skills_dirs);
             sm.load_skills()?;

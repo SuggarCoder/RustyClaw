@@ -11,9 +11,15 @@ pub mod health;
 mod helpers;
 mod messenger_handler;
 mod providers;
+mod protocol;
 mod secrets_handler;
 mod skills_handler;
 mod types;
+
+// Re-export protocol types
+pub use protocol::{
+    ClientFrameType, ServerFrameType, StatusType, frame,
+};
 
 // Re-export public types
 pub use types::{
