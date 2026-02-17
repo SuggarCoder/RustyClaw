@@ -7,6 +7,7 @@
 
 mod auth;
 pub mod csrf;
+pub mod health;
 mod helpers;
 mod messenger_handler;
 mod providers;
