@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::providers;
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 pub use crate::gateway::protocol::types::{
     ChatMessage, MediaRef, ModelResponse, ParsedToolCall, ToolCallResult,

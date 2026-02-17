@@ -99,7 +99,7 @@ impl MessageRole {
 /// Fix bare code fences (```) to have a language tag (```text).
 /// This prevents tui-markdown from warning about missing syntax definitions.
 fn fix_bare_code_fences(content: &str) -> String {
-    use std::borrow::Cow;
+    
     
     // Fast path: if no code fences at all, return as-is
     if !content.contains("```") {

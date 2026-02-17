@@ -19,7 +19,7 @@ where
     writer
         .send(Message::Binary(bytes.into()))
         .await
-        .map_err(|e| anyhow::anyhow!("send failed"))
+        .map_err(|_e| anyhow::anyhow!("send failed"))
 }
 
 /// Parse a ClientFrame from binary WebSocket message bytes.

@@ -4,7 +4,7 @@
 //! into application actions.
 
 use super::frames::{
-    ClientFrame, ClientFrameType, ClientPayload, SecretEntryDto, ServerFrame, ServerFrameType,
+    ClientFrame, ClientFrameType, ClientPayload, ServerFrame,
     ServerPayload, StatusType,
 };
 use crate::action::Action;
@@ -133,7 +133,7 @@ pub fn server_frame_to_action(frame: &ServerFrame) -> FrameAction {
                 message: message.clone(),
             })
         }
-        ServerPayload::SecretsGetResult { ok, key, value, .. } => {
+        ServerPayload::SecretsGetResult { ok: _, key, value, .. } => {
             FrameAction::just_action(Action::SecretsGetResult {
                 key: key.clone(),
                 value: value.clone(),
@@ -155,7 +155,7 @@ pub fn server_frame_to_action(frame: &ServerFrame) -> FrameAction {
                 message: message.clone(),
             })
         }
-        ServerPayload::SecretsSetDisabledResult { ok, message, .. } => {
+        ServerPayload::SecretsSetDisabledResult { ok, message: _, .. } => {
             FrameAction::just_action(Action::SecretsSetDisabledResult {
                 ok: *ok,
                 cred_name: String::new(),

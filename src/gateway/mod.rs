@@ -75,7 +75,7 @@ pub type SharedConfig = Arc<RwLock<Config>>;
 pub type SharedModelCtx = Arc<RwLock<Option<Arc<ModelContext>>>>;
 
 // Re-export protocol helpers for internal use
-pub(crate) use protocol::server::{send_frame, parse_client_frame};
+pub(crate) use protocol::server::parse_client_frame;
 
 // Re-export validate_model_connection for external use
 pub use providers::validate_model_connection;

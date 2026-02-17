@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
 use super::protocol::server;
-use super::{CopilotSession, ClientFrame, ClientFrameType, ClientPayload};
+use super::{CopilotSession, ClientFrameType, ClientPayload};
 use crate::providers;
 
 /// Maximum consecutive TOTP failures before lockout.
