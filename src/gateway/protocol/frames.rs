@@ -1,0 +1,595 @@
+//! Frame types and serialization for gateway protocol.
+//!
+//! This module contains the shared types used by both client and server.
+
+use serde::{Deserialize, Serialize};
+
+/// Incoming frame types from client to gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ClientFrameType {
+    /// Authentication response with TOTP code.
+    AuthResponse = 0,
+    /// Unlock the vault with password.
+    UnlockVault = 1,
+    /// List all secrets.
+    SecretsList = 2,
+    /// Get a specific secret.
+    SecretsGet = 3,
+    /// Store a secret.
+    SecretsStore = 4,
+    /// Delete a secret.
+    SecretsDelete = 5,
+    /// Peek at a credential (display without exposing value).
+    SecretsPeek = 6,
+    /// Set access policy for a credential.
+    SecretsSetPolicy = 7,
+    /// Enable/disable a credential.
+    SecretsSetDisabled = 8,
+    /// Delete a credential entirely.
+    SecretsDeleteCredential = 9,
+    /// Check if TOTP is configured.
+    SecretsHasTotp = 10,
+    /// Set up TOTP for the vault.
+    SecretsSetupTotp = 11,
+    /// Verify a TOTP code.
+    SecretsVerifyTotp = 12,
+    /// Remove TOTP from the vault.
+    SecretsRemoveTotp = 13,
+    /// Reload configuration.
+    Reload = 14,
+    /// Cancel the current tool loop.
+    Cancel = 15,
+    /// Chat message (default).
+    Chat = 16,
+}
+
+/// Outgoing frame types from gateway to client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ServerFrameType {
+    /// Authentication challenge request.
+    AuthChallenge = 0,
+    /// Authentication result.
+    AuthResult = 1,
+    /// Too many auth attempts, locked out.
+    AuthLocked = 2,
+    /// Hello message on connect.
+    Hello = 3,
+    /// Status update frame.
+    Status = 4,
+    /// Vault unlocked result.
+    VaultUnlocked = 5,
+    /// Secrets list result.
+    SecretsListResult = 6,
+    /// Secrets store result.
+    SecretsStoreResult = 7,
+    /// Secrets get result.
+    SecretsGetResult = 8,
+    /// Secrets delete result.
+    SecretsDeleteResult = 9,
+    /// Secrets peek result.
+    SecretsPeekResult = 10,
+    /// Secrets set policy result.
+    SecretsSetPolicyResult = 11,
+    /// Secrets set disabled result.
+    SecretsSetDisabledResult = 12,
+    /// Secrets delete credential result.
+    SecretsDeleteCredentialResult = 13,
+    /// Secrets has TOTP result.
+    SecretsHasTotpResult = 14,
+    /// Secrets setup TOTP result.
+    SecretsSetupTotpResult = 15,
+    /// Secrets verify TOTP result.
+    SecretsVerifyTotpResult = 16,
+    /// Secrets remove TOTP result.
+    SecretsRemoveTotpResult = 17,
+    /// Reload result.
+    ReloadResult = 18,
+    /// Error frame.
+    Error = 19,
+    /// Info frame.
+    Info = 20,
+    /// Stream start.
+    StreamStart = 21,
+    /// Chunk of response text.
+    Chunk = 22,
+    /// Thinking start (for extended thinking).
+    ThinkingStart = 23,
+    /// Thinking delta (streaming thinking content).
+    ThinkingDelta = 24,
+    /// Thinking end.
+    ThinkingEnd = 25,
+    /// Tool call from model.
+    ToolCall = 26,
+    /// Tool result from execution.
+    ToolResult = 27,
+    /// Response complete.
+    ResponseDone = 28,
+}
+
+/// Status frame sub-types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum StatusType {
+    /// Model is configured.
+    ModelConfigured = 0,
+    /// Credentials loaded.
+    CredentialsLoaded = 1,
+    /// Credentials missing.
+    CredentialsMissing = 2,
+    /// Model connecting.
+    ModelConnecting = 3,
+    /// Model ready.
+    ModelReady = 4,
+    /// Model error.
+    ModelError = 5,
+    /// No model configured.
+    NoModel = 6,
+    /// Vault is locked.
+    VaultLocked = 7,
+}
+
+// ============================================================================
+// Binary Frame Types
+// ============================================================================
+
+/// Generic client frame envelope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientFrame {
+    pub frame_type: ClientFrameType,
+    pub payload: ClientPayload,
+}
+
+/// Payload variants for client frames.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClientPayload {
+    Empty,
+    AuthResponse {
+        code: String,
+    },
+    UnlockVault {
+        password: String,
+    },
+    SecretsGet {
+        key: String,
+    },
+    SecretsStore {
+        key: String,
+        value: String,
+    },
+    SecretsDelete {
+        key: String,
+    },
+    SecretsPeek {
+        name: String,
+    },
+    SecretsSetPolicy {
+        name: String,
+        policy: String,
+        skills: Vec<String>,
+    },
+    SecretsSetDisabled {
+        name: String,
+        disabled: bool,
+    },
+    SecretsDeleteCredential {
+        name: String,
+    },
+    SecretsVerifyTotp {
+        code: String,
+    },
+}
+
+/// Generic server frame envelope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerFrame {
+    pub frame_type: ServerFrameType,
+    pub payload: ServerPayload,
+}
+
+/// Payload variants for server frames.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ServerPayload {
+    Empty,
+    Hello {
+        agent: String,
+        settings_dir: String,
+        vault_locked: bool,
+        provider: Option<String>,
+        model: Option<String>,
+    },
+    AuthChallenge {
+        method: String,
+    },
+    AuthResult {
+        ok: bool,
+        message: Option<String>,
+        retry: Option<bool>,
+    },
+    AuthLocked {
+        message: String,
+        retry_after: Option<u64>,
+    },
+    Status {
+        status: StatusType,
+        detail: String,
+    },
+    VaultUnlocked {
+        ok: bool,
+        message: Option<String>,
+    },
+    SecretsListResult {
+        ok: bool,
+        entries: Vec<SecretEntryDto>,
+    },
+    SecretsStoreResult {
+        ok: bool,
+        message: String,
+    },
+    SecretsGetResult {
+        ok: bool,
+        key: String,
+        value: Option<String>,
+        message: Option<String>,
+    },
+    SecretsDeleteResult {
+        ok: bool,
+        message: Option<String>,
+    },
+    SecretsPeekResult {
+        ok: bool,
+        fields: Vec<(String, String)>,
+        message: Option<String>,
+    },
+    SecretsSetPolicyResult {
+        ok: bool,
+        message: Option<String>,
+    },
+    SecretsSetDisabledResult {
+        ok: bool,
+        message: Option<String>,
+    },
+    SecretsDeleteCredentialResult {
+        ok: bool,
+        message: Option<String>,
+    },
+    SecretsHasTotpResult {
+        has_totp: bool,
+    },
+    SecretsSetupTotpResult {
+        ok: bool,
+        uri: Option<String>,
+        message: Option<String>,
+    },
+    SecretsVerifyTotpResult {
+        ok: bool,
+        message: Option<String>,
+    },
+    SecretsRemoveTotpResult {
+        ok: bool,
+        message: Option<String>,
+    },
+    ReloadResult {
+        ok: bool,
+        provider: String,
+        model: String,
+        message: Option<String>,
+    },
+    Error {
+        ok: bool,
+        message: String,
+    },
+    Info {
+        message: String,
+    },
+    StreamStart,
+    Chunk {
+        delta: String,
+    },
+    ThinkingStart,
+    ThinkingDelta {
+        delta: String,
+    },
+    ThinkingEnd,
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    ToolResult {
+        id: String,
+        name: String,
+        result: String,
+        is_error: bool,
+    },
+    ResponseDone {
+        ok: bool,
+    },
+}
+
+/// DTO for secret entries in list results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretEntryDto {
+    pub name: String,
+    pub label: String,
+    pub kind: String,
+    pub policy: String,
+    pub disabled: bool,
+}
+
+// ============================================================================
+// Serialization
+// ============================================================================
+
+/// Serialize a frame to binary using bincode with serde.
+pub fn serialize_frame<T: serde::Serialize>(frame: &T) -> Result<Vec<u8>, String> {
+    bincode::serde::encode_to_vec(frame, bincode::config::standard()).map_err(|e| e.to_string())
+}
+
+/// Deserialize a frame from binary using bincode with serde.
+pub fn deserialize_frame<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    let (result, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+        .map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
+/// Helper to send a ServerFrame as a binary WebSocket message.
+#[macro_export]
+macro_rules! send_binary_frame {
+    ($writer:expr, $frame:expr) => {{
+        let bytes = $crate::gateway::serialize_frame(&$frame)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize frame: {}", e))?;
+        $writer
+            .send(tokio_tungstenite::tungstenite::Message::Binary(bytes))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send frame: {}", e))
+    }};
+}
+
+/// Helper to parse a client frame from binary WebSocket message bytes.
+#[macro_export]
+macro_rules! parse_binary_client_frame {
+    ($bytes:expr) => {{
+        $crate::gateway::deserialize_frame::<$crate::gateway::ClientFrame>($bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to parse client frame: {}", e))
+    }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod serialization {
+        use super::*;
+
+        #[test]
+        fn test_server_frame_type_values() {
+            assert_eq!(ServerFrameType::AuthChallenge as u8, 0);
+            assert_eq!(ServerFrameType::AuthResult as u8, 1);
+            assert_eq!(ServerFrameType::AuthLocked as u8, 2);
+            assert_eq!(ServerFrameType::Hello as u8, 3);
+            assert_eq!(ServerFrameType::Status as u8, 4);
+            assert_eq!(ServerFrameType::VaultUnlocked as u8, 5);
+            assert_eq!(ServerFrameType::SecretsListResult as u8, 6);
+            assert_eq!(ServerFrameType::SecretsStoreResult as u8, 7);
+            assert_eq!(ServerFrameType::SecretsGetResult as u8, 8);
+            assert_eq!(ServerFrameType::SecretsDeleteResult as u8, 9);
+            assert_eq!(ServerFrameType::SecretsPeekResult as u8, 10);
+            assert_eq!(ServerFrameType::SecretsSetPolicyResult as u8, 11);
+            assert_eq!(ServerFrameType::SecretsSetDisabledResult as u8, 12);
+            assert_eq!(ServerFrameType::SecretsDeleteCredentialResult as u8, 13);
+            assert_eq!(ServerFrameType::SecretsHasTotpResult as u8, 14);
+            assert_eq!(ServerFrameType::SecretsSetupTotpResult as u8, 15);
+            assert_eq!(ServerFrameType::SecretsVerifyTotpResult as u8, 16);
+            assert_eq!(ServerFrameType::SecretsRemoveTotpResult as u8, 17);
+            assert_eq!(ServerFrameType::ReloadResult as u8, 18);
+            assert_eq!(ServerFrameType::Error as u8, 19);
+            assert_eq!(ServerFrameType::Info as u8, 20);
+            assert_eq!(ServerFrameType::StreamStart as u8, 21);
+            assert_eq!(ServerFrameType::Chunk as u8, 22);
+            assert_eq!(ServerFrameType::ThinkingStart as u8, 23);
+            assert_eq!(ServerFrameType::ThinkingDelta as u8, 24);
+            assert_eq!(ServerFrameType::ThinkingEnd as u8, 25);
+            assert_eq!(ServerFrameType::ToolCall as u8, 26);
+            assert_eq!(ServerFrameType::ToolResult as u8, 27);
+            assert_eq!(ServerFrameType::ResponseDone as u8, 28);
+        }
+
+        #[test]
+        fn test_client_frame_type_values() {
+            assert_eq!(ClientFrameType::AuthResponse as u8, 0);
+            assert_eq!(ClientFrameType::UnlockVault as u8, 1);
+            assert_eq!(ClientFrameType::SecretsList as u8, 2);
+            assert_eq!(ClientFrameType::SecretsGet as u8, 3);
+            assert_eq!(ClientFrameType::SecretsStore as u8, 4);
+            assert_eq!(ClientFrameType::SecretsDelete as u8, 5);
+            assert_eq!(ClientFrameType::SecretsPeek as u8, 6);
+            assert_eq!(ClientFrameType::SecretsSetPolicy as u8, 7);
+            assert_eq!(ClientFrameType::SecretsSetDisabled as u8, 8);
+            assert_eq!(ClientFrameType::SecretsDeleteCredential as u8, 9);
+            assert_eq!(ClientFrameType::SecretsHasTotp as u8, 10);
+            assert_eq!(ClientFrameType::SecretsSetupTotp as u8, 11);
+            assert_eq!(ClientFrameType::SecretsVerifyTotp as u8, 12);
+            assert_eq!(ClientFrameType::SecretsRemoveTotp as u8, 13);
+            assert_eq!(ClientFrameType::Reload as u8, 14);
+            assert_eq!(ClientFrameType::Cancel as u8, 15);
+            assert_eq!(ClientFrameType::Chat as u8, 16);
+        }
+
+        #[test]
+        fn test_status_type_values() {
+            assert_eq!(StatusType::ModelConfigured as u8, 0);
+            assert_eq!(StatusType::CredentialsLoaded as u8, 1);
+            assert_eq!(StatusType::CredentialsMissing as u8, 2);
+            assert_eq!(StatusType::ModelConnecting as u8, 3);
+            assert_eq!(StatusType::ModelReady as u8, 4);
+            assert_eq!(StatusType::ModelError as u8, 5);
+            assert_eq!(StatusType::NoModel as u8, 6);
+            assert_eq!(StatusType::VaultLocked as u8, 7);
+        }
+
+        #[test]
+        fn test_server_frame_roundtrip_hello() {
+            let frame = ServerFrame {
+                frame_type: ServerFrameType::Hello,
+                payload: ServerPayload::Hello {
+                    agent: "test-agent".into(),
+                    settings_dir: "/tmp/settings".into(),
+                    vault_locked: false,
+                    provider: Some("anthropic".into()),
+                    model: Some("claude-3".into()),
+                },
+            };
+
+            let bytes = serialize_frame(&frame).expect("serialize should succeed");
+            let decoded: ServerFrame =
+                deserialize_frame(&bytes).expect("deserialize should succeed");
+
+            match decoded.payload {
+                ServerPayload::Hello {
+                    agent,
+                    settings_dir,
+                    vault_locked,
+                    provider,
+                    model,
+                } => {
+                    assert_eq!(agent, "test-agent");
+                    assert_eq!(settings_dir, "/tmp/settings");
+                    assert!(!vault_locked);
+                    assert_eq!(provider, Some("anthropic".into()));
+                    assert_eq!(model, Some("claude-3".into()));
+                }
+                _ => panic!("Expected Hello payload"),
+            }
+        }
+
+        #[test]
+        fn test_server_frame_roundtrip_chunk() {
+            let frame = ServerFrame {
+                frame_type: ServerFrameType::Chunk,
+                payload: ServerPayload::Chunk {
+                    delta: "Hello, world!".into(),
+                },
+            };
+
+            let bytes = serialize_frame(&frame).expect("serialize should succeed");
+            let decoded: ServerFrame =
+                deserialize_frame(&bytes).expect("deserialize should succeed");
+
+            match decoded.payload {
+                ServerPayload::Chunk { delta } => {
+                    assert_eq!(delta, "Hello, world!");
+                }
+                _ => panic!("Expected Chunk payload"),
+            }
+        }
+
+        #[test]
+        fn test_server_frame_roundtrip_status() {
+            let frame = ServerFrame {
+                frame_type: ServerFrameType::Status,
+                payload: ServerPayload::Status {
+                    status: StatusType::ModelReady,
+                    detail: "Connected to Claude 3.5 Sonnet".into(),
+                },
+            };
+
+            let bytes = serialize_frame(&frame).expect("serialize should succeed");
+            let decoded: ServerFrame =
+                deserialize_frame(&bytes).expect("deserialize should succeed");
+
+            match decoded.payload {
+                ServerPayload::Status { status, detail } => {
+                    assert_eq!(status, StatusType::ModelReady);
+                    assert_eq!(detail, "Connected to Claude 3.5 Sonnet");
+                }
+                _ => panic!("Expected Status payload"),
+            }
+        }
+
+        #[test]
+        fn test_server_frame_roundtrip_auth_result() {
+            let frame = ServerFrame {
+                frame_type: ServerFrameType::AuthResult,
+                payload: ServerPayload::AuthResult {
+                    ok: true,
+                    message: Some("Authenticated successfully".into()),
+                    retry: None,
+                },
+            };
+
+            let bytes = serialize_frame(&frame).expect("serialize should succeed");
+            let decoded: ServerFrame =
+                deserialize_frame(&bytes).expect("deserialize should succeed");
+
+            match decoded.payload {
+                ServerPayload::AuthResult { ok, message, retry } => {
+                    assert!(ok);
+                    assert_eq!(message, Some("Authenticated successfully".into()));
+                    assert!(retry.is_none());
+                }
+                _ => panic!("Expected AuthResult payload"),
+            }
+        }
+
+        #[test]
+        fn test_client_frame_roundtrip_chat() {
+            let frame = ClientFrame {
+                frame_type: ClientFrameType::Chat,
+                payload: ClientPayload::Empty,
+            };
+
+            let bytes = serialize_frame(&frame).expect("serialize should succeed");
+            let decoded: ClientFrame =
+                deserialize_frame(&bytes).expect("deserialize should succeed");
+
+            assert_eq!(decoded.frame_type, ClientFrameType::Chat);
+            matches!(decoded.payload, ClientPayload::Empty);
+        }
+
+        #[test]
+        fn test_client_frame_roundtrip_secrets_store() {
+            let frame = ClientFrame {
+                frame_type: ClientFrameType::SecretsStore,
+                payload: ClientPayload::SecretsStore {
+                    key: "OPENAI_API_KEY".into(),
+                    value: "sk-test123".into(),
+                },
+            };
+
+            let bytes = serialize_frame(&frame).expect("serialize should succeed");
+            let decoded: ClientFrame =
+                deserialize_frame(&bytes).expect("deserialize should succeed");
+
+            match decoded.payload {
+                ClientPayload::SecretsStore { key, value } => {
+                    assert_eq!(key, "OPENAI_API_KEY");
+                    assert_eq!(value, "sk-test123");
+                }
+                _ => panic!("Expected SecretsStore payload"),
+            }
+        }
+
+        #[test]
+        fn test_secret_entry_dto_roundtrip() {
+            let entry = SecretEntryDto {
+                name: "api_key".into(),
+                label: "OpenAI API Key".into(),
+                kind: "ApiKey".into(),
+                policy: "always".into(),
+                disabled: false,
+            };
+
+            let json = serde_json::to_string(&entry).expect("JSON serialize should succeed");
+            let decoded: SecretEntryDto =
+                serde_json::from_str(&json).expect("JSON deserialize should succeed");
+
+            assert_eq!(decoded.name, "api_key");
+            assert_eq!(decoded.label, "OpenAI API Key");
+            assert_eq!(decoded.kind, "ApiKey");
+            assert_eq!(decoded.policy, "always");
+            assert!(!decoded.disabled);
+        }
+    }
+}

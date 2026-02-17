@@ -3,7 +3,9 @@ use crate::app::App;
 use crate::config::Config;
 use crate::daemon;
 use crate::dialogs::{FetchModelsLoading, SecretViewerState, SPINNER_FRAMES};
-use crate::gateway::{ServerFrame, ServerFrameType};
+use crate::gateway::{
+    ClientFrame, deserialize_frame, serialize_frame, ServerFrame, ServerFrameType,
+};
 use crate::gateway::ChatMessage;
 use crate::pages::Page;
 use crate::panes::DisplayMessage;
