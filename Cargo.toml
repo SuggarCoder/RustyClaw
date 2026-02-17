@@ -108,6 +108,12 @@ base64 = "0.22"
 # HTTP date parsing (for Set-Cookie expires)
 httpdate = "1.0"
 
+# Terminal styling
+colored = "3.1"
+indicatif = "0.18"
+unicode-width = "0.2"
+rpassword = "7"
+
 # Matrix messenger support (optional)
 # Features: e2e-encryption (default), sqlite (persistence), rustls-tls (TLS)
 # rustls-tls is required when default-features = false
@@ -126,11 +132,9 @@ chromiumoxide = { version = "0.8", default-features = false, features = ["tokio-
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# Terminal styling
-colored = "3.1"
-indicatif = "0.18"
-unicode-width = "0.2"
-rpassword = "7"
+# Landlock sandbox (Linux 5.13+ kernel)
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
 
 # Patches for crypto compatibility
 [patch.crates-io]
