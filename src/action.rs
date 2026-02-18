@@ -207,5 +207,9 @@ pub enum Action {
         id: String,
         approved: bool,
     },
+    /// Gateway is requesting structured user input (ask_user tool)
+    UserPromptRequest(crate::dialogs::user_prompt::UserPrompt),
+    /// User responded to a structured prompt
+    UserPromptResponse(crate::dialogs::user_prompt::UserPromptResponse),
     Noop,
 }

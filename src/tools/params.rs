@@ -1109,3 +1109,57 @@ pub fn summarize_file_params() -> Vec<ToolParam> {
         },
     ]
 }
+
+pub fn ask_user_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "prompt_type".into(),
+            description: "The kind of input to request. One of: 'select' (pick one option), \
+                          'multi_select' (pick multiple), 'confirm' (yes/no), \
+                          'text' (free text input), 'form' (multiple named fields)."
+                .into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "title".into(),
+            description: "The question or instruction to show the user.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "description".into(),
+            description: "Optional longer explanation shown below the title.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "options".into(),
+            description: "Array of option objects for select/multi_select. \
+                          Each object has 'label' (required), optional 'description', \
+                          and optional 'value' (defaults to label). \
+                          Example: [{\"label\":\"Option A\"},{\"label\":\"Option B\",\"description\":\"detailed\"}]"
+                .into(),
+            param_type: "array".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "default_value".into(),
+            description: "Default value: index for select (number), array of indices for \
+                          multi_select, boolean for confirm, string for text."
+                .into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "fields".into(),
+            description: "Array of field objects for 'form' type. Each has 'name' (key), \
+                          'label' (display), optional 'placeholder', optional 'default', \
+                          and optional 'required' (boolean). \
+                          Example: [{\"name\":\"host\",\"label\":\"Hostname\",\"required\":true}]"
+                .into(),
+            param_type: "array".into(),
+            required: false,
+        },
+    ]
+}

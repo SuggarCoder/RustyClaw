@@ -136,4 +136,17 @@ impl App {
             None => Action::Update,
         }
     }
+
+    pub fn handle_user_prompt_key(&mut self, key: crossterm::event::KeyEvent) -> Action {
+        let Some(ref mut dialog) = self.user_prompt_dialog else {
+            return Action::Noop;
+        };
+        match dialogs::handle_user_prompt_key(dialog, key) {
+            Some(action) => {
+                self.user_prompt_dialog = None;
+                action
+            }
+            None => Action::Update,
+        }
+    }
 }

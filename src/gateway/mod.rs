@@ -615,6 +615,11 @@ async fn handle_connection(
     let (approval_tx, approval_rx) = tokio::sync::mpsc::channel::<(String, bool)>(4);
     let approval_rx = Arc::new(Mutex::new(approval_rx));
 
+    // Channel for user-prompt responses (used by the ask_user tool).
+    let (user_prompt_tx, user_prompt_rx) =
+        tokio::sync::mpsc::channel::<(String, bool, serde_json::Value)>(4);
+    let user_prompt_rx = Arc::new(Mutex::new(user_prompt_rx));
+
     let reader_cancel = cancel.clone();
     let reader_tool_cancel = tool_cancel.clone();
     let reader_handle = tokio::spawn(async move {
@@ -640,6 +645,12 @@ async fn handle_connection(
                                     if frame.frame_type == ClientFrameType::ToolApprovalResponse {
                                         if let ClientPayload::ToolApprovalResponse { id, approved } = frame.payload {
                                             let _ = approval_tx.send((id, approved)).await;
+                                            continue;
+                                        }
+                                    }
+                                    if frame.frame_type == ClientFrameType::UserPromptResponse {
+                                        if let ClientPayload::UserPromptResponse { id, dismissed, value } = frame.payload {
+                                            let _ = user_prompt_tx.send((id, dismissed, value)).await;
                                             continue;
                                         }
                                     }
@@ -956,6 +967,7 @@ async fn handle_connection(
                                     &tool_cancel,
                                     &shared_config,
                                     &approval_rx,
+                                    &user_prompt_rx,
                                 )
                                 .await
                                 {
@@ -969,9 +981,10 @@ async fn handle_connection(
                                     send_frame(&mut writer, &error_frame).await?;
                                 }
                             }
-                            ClientPayload::Empty | ClientPayload::AuthChallenge { .. } | ClientPayload::AuthResponse { .. } | ClientPayload::ToolApprovalResponse { .. } => {
+                            ClientPayload::Empty | ClientPayload::AuthChallenge { .. } | ClientPayload::AuthResponse { .. } | ClientPayload::ToolApprovalResponse { .. } | ClientPayload::UserPromptResponse { .. } => {
                                 // AuthChallenge/AuthResponse handled in auth phase.
                                 // ToolApprovalResponse handled by the reader task.
+                                // UserPromptResponse handled by the reader task.
                             }
                         }
                     }
@@ -1005,6 +1018,193 @@ async fn handle_connection(
     Ok(())
 }
 
+/// Execute the `ask_user` tool by sending a prompt to the TUI and waiting
+/// for the user's response on the user_prompt channel.
+async fn execute_user_prompt(
+    writer: &mut WsWriter,
+    call_id: &str,
+    arguments: &serde_json::Value,
+    user_prompt_rx: &Arc<Mutex<tokio::sync::mpsc::Receiver<(String, bool, serde_json::Value)>>>,
+) -> (String, bool) {
+    use crate::dialogs::user_prompt::{FormField, PromptOption, PromptType, UserPrompt};
+
+    // Parse arguments into a UserPrompt
+    let prompt_type_str = arguments
+        .get("prompt_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("text");
+    let title = arguments
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Question")
+        .to_string();
+    let description = arguments
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let options: Vec<PromptOption> = arguments
+        .get("options")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|o| {
+                    if let Some(s) = o.as_str() {
+                        PromptOption {
+                            label: s.to_string(),
+                            description: None,
+                            value: None,
+                        }
+                    } else {
+                        PromptOption {
+                            label: o
+                                .get("label")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?")
+                                .to_string(),
+                            description: o
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            value: o
+                                .get("value")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                        }
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let prompt_type = match prompt_type_str {
+        "select" => {
+            let default = arguments
+                .get("default_value")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
+            PromptType::Select { options, default }
+        }
+        "multi_select" => {
+            let defaults: Vec<usize> = arguments
+                .get("default_value")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_u64().map(|n| n as usize))
+                        .collect()
+                })
+                .unwrap_or_default();
+            PromptType::MultiSelect { options, defaults }
+        }
+        "confirm" => {
+            let default = arguments
+                .get("default_value")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            PromptType::Confirm { default }
+        }
+        "text" => {
+            let placeholder = arguments
+                .get("placeholder")
+                .or_else(|| arguments.get("description"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let default = arguments
+                .get("default_value")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            PromptType::TextInput {
+                placeholder,
+                default,
+            }
+        }
+        "form" => {
+            let fields: Vec<FormField> = arguments
+                .get("fields")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|f| FormField {
+                            name: f
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("field")
+                                .to_string(),
+                            label: f
+                                .get("label")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Field")
+                                .to_string(),
+                            placeholder: f
+                                .get("placeholder")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            default: f
+                                .get("default")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            required: f
+                                .get("required")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            PromptType::Form { fields }
+        }
+        _ => PromptType::TextInput {
+            placeholder: None,
+            default: None,
+        },
+    };
+
+    let prompt = UserPrompt {
+        id: call_id.to_string(),
+        title,
+        description,
+        prompt_type,
+    };
+
+    // Serialize the prompt to JSON and send it to the TUI.
+    let prompt_json = match serde_json::to_string(&prompt) {
+        Ok(json) => json,
+        Err(e) => {
+            return (format!("Failed to serialize user prompt: {}", e), true);
+        }
+    };
+
+    if let Err(e) = protocol::server::send_user_prompt_request(
+        writer,
+        call_id,
+        &prompt_json,
+    )
+    .await
+    {
+        return (format!("Failed to send user prompt: {}", e), true);
+    }
+
+    // Wait for the user's response (with 5 minute timeout).
+    let rx_result = {
+        let mut rx = user_prompt_rx.lock().await;
+        tokio::time::timeout(std::time::Duration::from_secs(300), rx.recv()).await
+    };
+
+    match rx_result {
+        Ok(Some((id, dismissed, value))) if id == call_id => {
+            if dismissed {
+                ("User dismissed the prompt without answering.".to_string(), false)
+            } else {
+                (serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()), false)
+            }
+        }
+        Ok(Some(_)) => ("Mismatched prompt response ID.".to_string(), true),
+        Ok(None) => ("User prompt channel closed.".to_string(), true),
+        Err(_) => ("User prompt timed out after 5 minutes.".to_string(), true),
+    }
+}
+
 /// Route an incoming text frame to the appropriate handler.
 ///
 /// Implements an agentic tool loop: the model is called, and if it
@@ -1026,6 +1226,7 @@ async fn dispatch_text_message(
     tool_cancel: &ToolCancelFlag,
     shared_config: &SharedConfig,
     approval_rx: &Arc<Mutex<tokio::sync::mpsc::Receiver<(String, bool)>>>,
+    user_prompt_rx: &Arc<Mutex<tokio::sync::mpsc::Receiver<(String, bool, serde_json::Value)>>>,
 ) -> Result<()> {
     let mut resolved = match providers::resolve_request(req.clone(), model_ctx) {
         Ok(r) => r,
@@ -1319,7 +1520,9 @@ async fn dispatch_text_message(
                             tc.arguments.clone(),
                         ).await?;
 
-                        if tools::is_secrets_tool(&tc.name) {
+                        if tools::is_user_prompt_tool(&tc.name) {
+                            execute_user_prompt(writer, &tc.id, &tc.arguments, user_prompt_rx).await
+                        } else if tools::is_secrets_tool(&tc.name) {
                             match secrets_handler::execute_secrets_tool(&tc.name, &tc.arguments, vault).await {
                                 Ok(text) => (text, false),
                                 Err(err) => (err, true),
@@ -1347,7 +1550,9 @@ async fn dispatch_text_message(
                     ).await?;
 
                     // Execute the tool.
-                    if tools::is_secrets_tool(&tc.name) {
+                    if tools::is_user_prompt_tool(&tc.name) {
+                        execute_user_prompt(writer, &tc.id, &tc.arguments, user_prompt_rx).await
+                    } else if tools::is_secrets_tool(&tc.name) {
                         match secrets_handler::execute_secrets_tool(&tc.name, &tc.arguments, vault).await {
                             Ok(text) => (text, false),
                             Err(err) => (err, true),

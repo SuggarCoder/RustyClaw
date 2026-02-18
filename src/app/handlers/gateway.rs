@@ -762,19 +762,26 @@ impl App {
                         }
                     }
                 }
-                let args_str = arguments.to_string();
-                // Compact display for tool call arguments
-                let display_args = if args_str.len() > 200 {
-                    format!("{}…", &args_str[..200])
+                // Pretty display for ask_user; compact JSON for everything else.
+                if name == "ask_user" {
+                    let display = format_ask_user_call(&arguments);
+                    self.state.messages.push(DisplayMessage::tool_call(display));
                 } else {
-                    args_str
-                };
-                self.state.messages.push(DisplayMessage::tool_call(format!("{name}({display_args})")));
+                    let args_str = arguments.to_string();
+                    let display_args = if args_str.len() > 200 {
+                        format!("{}…", &args_str[..200])
+                    } else {
+                        args_str
+                    };
+                    self.state.messages.push(DisplayMessage::tool_call(format!("{name}({display_args})")));
+                }
             }
             Action::GatewayToolResult { name, result, is_error, .. } => {
                 let prefix = if is_error { "⚠ " } else { "" };
-                // Compact display: show first ~500 chars with truncation indicator
-                let display_result = if result.len() > 500 {
+                // Pretty display for ask_user results; compact for everything else.
+                let display_result = if name == "ask_user" {
+                    format_ask_user_result(&result, is_error)
+                } else if result.len() > 500 {
                     let truncated = &result[..result.char_indices()
                         .take_while(|(i, _)| *i < 500)
                         .last()
@@ -910,5 +917,126 @@ impl App {
         }
 
         Ok(Some(Action::Update))
+    }
+}
+
+/// Format an `ask_user` tool call for human-readable display in the messages pane.
+fn format_ask_user_call(arguments: &serde_json::Value) -> String {
+    let prompt_type = arguments
+        .get("prompt_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("question");
+    let title = arguments
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(no title)");
+
+    let mut out = format!("ask_user  💬 {}", title);
+
+    if let Some(desc) = arguments.get("description").and_then(|v| v.as_str()) {
+        out.push_str(&format!("\n  {}", desc));
+    }
+
+    match prompt_type {
+        "select" | "multi_select" => {
+            let kind = if prompt_type == "select" {
+                "Pick one"
+            } else {
+                "Pick any"
+            };
+            out.push_str(&format!("\n  [{}]", kind));
+            if let Some(opts) = arguments.get("options").and_then(|v| v.as_array()) {
+                for (i, opt) in opts.iter().enumerate() {
+                    let label = opt
+                        .as_str()
+                        .or_else(|| opt.get("label").and_then(|v| v.as_str()))
+                        .unwrap_or("?");
+                    let desc = opt
+                        .get("description")
+                        .and_then(|v| v.as_str());
+                    if let Some(d) = desc {
+                        out.push_str(&format!("\n    {}. {} — {}", i + 1, label, d));
+                    } else {
+                        out.push_str(&format!("\n    {}. {}", i + 1, label));
+                    }
+                }
+            }
+        }
+        "confirm" => {
+            out.push_str("\n  [Yes / No]");
+        }
+        "text" => {
+            if let Some(ph) = arguments.get("placeholder").and_then(|v| v.as_str()) {
+                out.push_str(&format!("\n  (placeholder: {})", ph));
+            }
+        }
+        "form" => {
+            out.push_str("\n  [Form]");
+            if let Some(fields) = arguments.get("fields").and_then(|v| v.as_array()) {
+                for f in fields {
+                    let label = f
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
+                    let req = f
+                        .get("required")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if req {
+                        out.push_str(&format!("\n    • {} *", label));
+                    } else {
+                        out.push_str(&format!("\n    • {}", label));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    out
+}
+
+/// Format an `ask_user` tool result for human-readable display.
+fn format_ask_user_result(result: &str, is_error: bool) -> String {
+    if is_error {
+        return format!("⚠ {}", result);
+    }
+
+    // The result is either a JSON value or a plain string like "User dismissed…"
+    match serde_json::from_str::<serde_json::Value>(result) {
+        Ok(serde_json::Value::String(s)) => format!("→ {}", s),
+        Ok(serde_json::Value::Bool(b)) => {
+            if b {
+                "→ Yes".to_string()
+            } else {
+                "→ No".to_string()
+            }
+        }
+        Ok(serde_json::Value::Array(arr)) => {
+            let items: Vec<String> = arr
+                .iter()
+                .map(|v| v.as_str().unwrap_or("?").to_string())
+                .collect();
+            format!("→ {}", items.join(", "))
+        }
+        Ok(serde_json::Value::Object(map)) => {
+            let fields: Vec<String> = map
+                .iter()
+                .map(|(k, v)| {
+                    let val = match v.as_str() {
+                        Some(s) => s.to_string(),
+                        None => v.to_string(),
+                    };
+                    format!("{}: {}", k, val)
+                })
+                .collect();
+            format!("→ {}", fields.join(", "))
+        }
+        Ok(serde_json::Value::Null) => "→ (dismissed)".to_string(),
+        Ok(other) => format!("→ {}", other),
+        Err(_) => {
+            // Plain text result (e.g. "User dismissed the prompt…")
+            result.to_string()
+        }
     }
 }

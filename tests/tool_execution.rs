@@ -652,7 +652,9 @@ fn test_all_30_tools_have_tests() {
         "disk_usage", "classify_files", "system_monitor", "battery_health",
         "app_index", "cloud_browse", "browser_cache", "screenshot",
         "clipboard", "audit_sensitive", "secure_delete", "summarize_file",
+        // Interactive (1)
+        "ask_user",
     ];
 
-    assert_eq!(tools.len(), 48, "Should have exactly 48 tools");
+    assert_eq!(tools.len(), 49, "Should have exactly 49 tools");
 }

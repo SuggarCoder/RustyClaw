@@ -472,10 +472,7 @@ impl DisplayMessage {
         let is_assistant = matches!(role, MessageRole::Assistant);
 
         if !is_assistant {
-            // Non-assistant messages stay single-line (no markdown processing).
-            let mut spans: Vec<Span<'static>> = Vec::new();
-            spans.push(Span::raw(" "));
-            let icon_fn = || match role {
+            let icon = match role {
                 MessageRole::User => "▶",
                 MessageRole::Assistant => "◀",
                 MessageRole::Info => "ℹ",
@@ -487,16 +484,52 @@ impl DisplayMessage {
                 MessageRole::ToolResult => "📎",
                 MessageRole::Thinking => "💭",
             };
-            if matches!(role, MessageRole::User | MessageRole::Assistant | MessageRole::Info |
-                       MessageRole::Success | MessageRole::Warning | MessageRole::Error |
-                       MessageRole::System | MessageRole::ToolCall | MessageRole::ToolResult |
-                       MessageRole::Thinking) {
-                let icon = icon_fn();
-                spans.push(Span::styled(
-                    format!("{icon} "),
-                    Style::default().fg(color),
-                ));
+
+            // Tool calls / results are often multi-line (e.g. ask_user prompts
+            // with options, form fields, etc.).  Split them into separate Lines
+            // so the TUI renders each line independently instead of mangling
+            // them into a single horizontal run.
+            let is_multiline = matches!(
+                role,
+                MessageRole::ToolCall | MessageRole::ToolResult | MessageRole::Thinking
+            ) && content.contains('\n');
+
+            if is_multiline {
+                let mut lines: Vec<Line<'static>> = Vec::new();
+                for (i, raw_line) in content.lines().enumerate() {
+                    let mut spans: Vec<Span<'static>> = Vec::new();
+                    if i == 0 {
+                        // First line gets the icon
+                        spans.push(Span::raw(" "));
+                        spans.push(Span::styled(
+                            format!("{icon} "),
+                            Style::default().fg(color),
+                        ));
+                        spans.push(Span::styled(
+                            raw_line.to_string(),
+                            Style::default().fg(color),
+                        ));
+                    } else {
+                        // Continuation lines: indent to align with the text
+                        // after the icon ("  🔧 " = 1+2+1 = 4 visual chars)
+                        spans.push(Span::raw("     "));
+                        spans.push(Span::styled(
+                            raw_line.to_string(),
+                            Style::default().fg(color),
+                        ));
+                    }
+                    lines.push(Line::from(spans));
+                }
+                return lines;
             }
+
+            // Single-line non-assistant messages.
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                format!("{icon} "),
+                Style::default().fg(color),
+            ));
             spans.push(Span::styled(content, Style::default().fg(color)));
             return vec![Line::from(spans)];
         }

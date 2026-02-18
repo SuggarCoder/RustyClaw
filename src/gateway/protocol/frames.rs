@@ -44,6 +44,8 @@ pub enum ClientFrameType {
     Chat = 16,
     /// User response to a tool approval request.
     ToolApprovalResponse = 17,
+    /// User response to a structured prompt (ask_user tool).
+    UserPromptResponse = 18,
 }
 
 /// Outgoing frame types from gateway to client.
@@ -110,6 +112,8 @@ pub enum ServerFrameType {
     ResponseDone = 28,
     /// Tool approval request — ask user to approve a tool call.
     ToolApprovalRequest = 29,
+    /// Structured user prompt request (ask_user tool).
+    UserPromptRequest = 30,
 }
 
 /// Status frame sub-types.
@@ -197,6 +201,11 @@ pub enum ClientPayload {
     ToolApprovalResponse {
         id: String,
         approved: bool,
+    },
+    UserPromptResponse {
+        id: String,
+        dismissed: bool,
+        value: serde_json::Value,
     },
 }
 
@@ -330,6 +339,10 @@ pub enum ServerPayload {
         name: String,
         arguments: serde_json::Value,
     },
+    UserPromptRequest {
+        id: String,
+        prompt_json: String,
+    },
 }
 
 /// DTO for secret entries in list results.
@@ -418,6 +431,8 @@ mod tests {
             assert_eq!(ServerFrameType::ToolCall as u8, 26);
             assert_eq!(ServerFrameType::ToolResult as u8, 27);
             assert_eq!(ServerFrameType::ResponseDone as u8, 28);
+            assert_eq!(ServerFrameType::ToolApprovalRequest as u8, 29);
+            assert_eq!(ServerFrameType::UserPromptRequest as u8, 30);
         }
 
         #[test]
@@ -439,6 +454,8 @@ mod tests {
             assert_eq!(ClientFrameType::Reload as u8, 14);
             assert_eq!(ClientFrameType::Cancel as u8, 15);
             assert_eq!(ClientFrameType::Chat as u8, 16);
+            assert_eq!(ClientFrameType::ToolApprovalResponse as u8, 17);
+            assert_eq!(ClientFrameType::UserPromptResponse as u8, 18);
         }
 
         #[test]

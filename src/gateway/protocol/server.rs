@@ -502,3 +502,22 @@ where
     };
     send_frame(writer, &frame).await
 }
+
+/// Build and send a user-prompt request frame (for the `ask_user` tool).
+pub async fn send_user_prompt_request<S>(
+    writer: &mut S,
+    id: &str,
+    prompt_json: &str,
+) -> Result<()>
+where
+    S: SinkExt<Message> + Unpin,
+{
+    let frame = ServerFrame {
+        frame_type: ServerFrameType::UserPromptRequest,
+        payload: ServerPayload::UserPromptRequest {
+            id: id.into(),
+            prompt_json: prompt_json.into(),
+        },
+    };
+    send_frame(writer, &frame).await
+}

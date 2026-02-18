@@ -5,7 +5,7 @@ use crate::dialogs::{
     self, ApiKeyDialogState, AuthPromptState, CredDialogOption, CredentialDialogState,
     FetchModelsLoading, ModelSelectorState, PolicyPickerState, ProviderSelectorState,
     SecretViewerState, TotpDialogPhase, TotpDialogState, ToolPermissionsState,
-    ToolApprovalState,
+    ToolApprovalState, UserPromptState,
     VaultUnlockPromptState, SPINNER_FRAMES,
 };
 use crate::gateway::{ChatMessage, ClientFrame, ClientFrameType, ClientPayload};
@@ -61,6 +61,7 @@ pub struct App {
     pub policy_picker: Option<PolicyPickerState>,
     pub tool_permissions_dialog: Option<ToolPermissionsState>,
     pub tool_approval_dialog: Option<ToolApprovalState>,
+    pub user_prompt_dialog: Option<UserPromptState>,
     pub hatching_page: Option<Hatching>,
     pub showing_hatching: bool,
     pub deferred_vault_password: Option<String>,
@@ -190,6 +191,7 @@ impl App {
             policy_picker: None,
             tool_permissions_dialog: None,
             tool_approval_dialog: None,
+            user_prompt_dialog: None,
             hatching_page,
             showing_hatching,
             deferred_vault_password: None,
@@ -303,6 +305,13 @@ impl App {
                         } else if self.tool_approval_dialog.is_some() {
                             if let Event::Key(key) = event {
                                 let action = self.handle_tool_approval_key(key);
+                                Some(action)
+                            } else {
+                                None
+                            }
+                        } else if self.user_prompt_dialog.is_some() {
+                            if let Event::Key(key) = event {
+                                let action = self.handle_user_prompt_key(key);
                                 Some(action)
                             } else {
                                 None
@@ -606,6 +615,26 @@ impl App {
                     payload: ClientPayload::ToolApprovalResponse {
                         id: id.clone(),
                         approved: *approved,
+                    },
+                };
+                self.send_frame(frame).await;
+                return Ok(None);
+            }
+            Action::UserPromptRequest(prompt) => {
+                // Open the user prompt dialog.
+                self.user_prompt_dialog =
+                    Some(UserPromptState::new(prompt.clone()));
+                return Ok(None);
+            }
+            Action::UserPromptResponse(resp) => {
+                // Close the dialog and send the response frame to the gateway.
+                self.user_prompt_dialog = None;
+                let frame = ClientFrame {
+                    frame_type: ClientFrameType::UserPromptResponse,
+                    payload: ClientPayload::UserPromptResponse {
+                        id: resp.id.clone(),
+                        dismissed: resp.dismissed,
+                        value: resp.value.clone(),
                     },
                 };
                 self.send_frame(frame).await;
@@ -1179,6 +1208,10 @@ impl App {
 
             if let Some(ref dialog) = self.tool_approval_dialog {
                 dialogs::draw_tool_approval(frame, dialog);
+            }
+
+            if let Some(ref mut dialog) = self.user_prompt_dialog {
+                dialogs::draw_user_prompt(frame, dialog);
             }
 
             if let Some(ref dialog) = self.totp_dialog {

@@ -12,6 +12,7 @@ mod secret_viewer;
 mod totp;
 mod tool_approval;
 mod tool_permissions;
+pub mod user_prompt;
 mod vault_unlock;
 
 pub use api_key::{
@@ -47,6 +48,10 @@ pub use tool_permissions::{
 };
 pub use tool_approval::{
     ToolApprovalState, draw_tool_approval, handle_tool_approval_key,
+};
+pub use user_prompt::{
+    UserPrompt, UserPromptResponse, UserPromptState, draw_user_prompt,
+    handle_user_prompt_key,
 };
 
 /// Spinner frames for loading animations.

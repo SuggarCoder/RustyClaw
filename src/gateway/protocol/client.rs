@@ -232,6 +232,18 @@ pub fn server_frame_to_action(frame: &ServerFrame) -> FrameAction {
             name: name.clone(),
             arguments: arguments.clone(),
         }),
+        ServerPayload::UserPromptRequest { id, prompt_json } => {
+            match serde_json::from_str::<crate::dialogs::user_prompt::UserPrompt>(prompt_json) {
+                Ok(mut prompt) => {
+                    prompt.id = id.clone();
+                    FrameAction::just_action(Action::UserPromptRequest(prompt))
+                }
+                Err(e) => FrameAction::just_action(Action::Error(format!(
+                    "Failed to parse user prompt: {}",
+                    e
+                ))),
+            }
+        }
         ServerPayload::Empty => FrameAction::none(),
     }
 }

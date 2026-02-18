@@ -74,6 +74,13 @@ use system_tools::{
     exec_audit_sensitive, exec_secure_delete, exec_summarize_file,
 };
 
+/// Stub executor for the `ask_user` tool — never called directly.
+/// Execution is intercepted by the gateway, which forwards the prompt
+/// to the TUI and returns the user's response as the tool result.
+fn exec_ask_user_stub(_args: &Value, _workspace_dir: &Path) -> Result<String, String> {
+    Err("ask_user must be executed via the gateway".into())
+}
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -208,6 +215,7 @@ pub fn tool_summary(name: &str) -> &'static str {
         "audit_sensitive" => "Scan files for exposed secrets",
         "secure_delete" => "Securely overwrite & delete files",
         "summarize_file" => "Preview-summarize any file type",
+        "ask_user" => "Ask the user structured questions",
         _ => "Unknown tool",
     }
 }
@@ -288,6 +296,7 @@ pub fn all_tools() -> Vec<&'static ToolDef> {
         &AUDIT_SENSITIVE,
         &SECURE_DELETE,
         &SUMMARIZE_FILE,
+        &ASK_USER,
     ]
 }
 
@@ -731,6 +740,20 @@ pub static SUMMARIZE_FILE: ToolDef = ToolDef {
     execute: exec_summarize_file,
 };
 
+// ── Interactive prompt tool ────────────────────────────────────────────────
+
+pub static ASK_USER: ToolDef = ToolDef {
+    name: "ask_user",
+    description: "Ask the user a structured question. Opens an interactive dialog \
+                  in the TUI for the user to respond. Supports five prompt types: \
+                  'select' (pick one from a list), 'multi_select' (pick multiple), \
+                  'confirm' (yes/no), 'text' (free text input), and 'form' \
+                  (multiple named fields). Returns the user's answer as a JSON value. \
+                  Use this when you need specific, structured input rather than free chat.",
+    parameters: vec![],
+    execute: exec_ask_user_stub,
+};
+
 // Re-export parameter functions from params module
 pub use params::*;
 
@@ -815,6 +838,7 @@ fn resolve_params(tool: &ToolDef) -> Vec<ToolParam> {
         "audit_sensitive" => audit_sensitive_params(),
         "secure_delete" => secure_delete_params(),
         "summarize_file" => summarize_file_params(),
+        "ask_user" => ask_user_params(),
         _ => vec![],
     }
 }
@@ -915,6 +939,12 @@ pub fn is_skill_tool(name: &str) -> bool {
             | "skill_enable"
             | "skill_link_secret"
     )
+}
+
+/// Returns `true` for the interactive prompt tool that must be routed
+/// through the gateway → TUI → user → gateway → tool-result path.
+pub fn is_user_prompt_tool(name: &str) -> bool {
+    name == "ask_user"
 }
 
 /// Find a tool by name and execute it with the given arguments.
@@ -1181,7 +1211,7 @@ mod tests {
     #[test]
     fn test_openai_format() {
         let tools = tools_openai();
-        assert_eq!(tools.len(), 48);
+        assert_eq!(tools.len(), 49);
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["function"]["name"], "read_file");
         assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
@@ -1190,7 +1220,7 @@ mod tests {
     #[test]
     fn test_anthropic_format() {
         let tools = tools_anthropic();
-        assert_eq!(tools.len(), 48);
+        assert_eq!(tools.len(), 49);
         assert_eq!(tools[0]["name"], "read_file");
         assert!(tools[0]["input_schema"]["properties"]["path"].is_object());
     }
@@ -1198,7 +1228,7 @@ mod tests {
     #[test]
     fn test_google_format() {
         let tools = tools_google();
-        assert_eq!(tools.len(), 48);
+        assert_eq!(tools.len(), 49);
         assert_eq!(tools[0]["name"], "read_file");
     }
 
