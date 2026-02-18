@@ -355,11 +355,11 @@ impl Pane for MessagesPane {
             let lines = Self::get_lines(msg);
             // Use text_width for wrapping calculation to account for border
             let h = Self::visual_lines_count(lines, text_width) as u16;
-            
+
             // Determine if this message is focused
             let is_focused = self.focused_message == Some(i);
             let (border_char, border_style, show_border) = Self::role_border(&msg.role, is_focused);
-            
+
             entries.push(Entry {
                 text: Text::from(lines.clone()),
                 bg: Self::role_bg(&msg.role),
@@ -469,7 +469,7 @@ impl Pane for MessagesPane {
             // Render the wrapped text (offset by border width)
             let text_x = if entry.show_border { area.x + BORDER_WIDTH } else { area.x + BORDER_WIDTH };
             let text_w = area.width.saturating_sub(BORDER_WIDTH);
-            
+
             let mut para = Paragraph::new(entry.text.clone())
                 .wrap(Wrap { trim: false })
                 .scroll((skip, 0));

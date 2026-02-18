@@ -306,7 +306,7 @@ pub mod tui_palette {
 
     /// Thin left border for blurred/inactive items
     pub const BORDER_THIN: &str = "│";
-    /// Thick left border for focused/active items  
+    /// Thick left border for focused/active items
     pub const BORDER_THICK: &str = "▌";
     /// Section separator line
     pub const SECTION_SEP: &str = "─";

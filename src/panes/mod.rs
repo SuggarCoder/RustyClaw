@@ -102,19 +102,19 @@ impl MessageRole {
 /// Fix bare code fences (```) to have a language tag (```text).
 /// This prevents tui-markdown from warning about missing syntax definitions.
 fn fix_bare_code_fences(content: &str) -> String {
-    
-    
+
+
     // Fast path: if no code fences at all, return as-is
     if !content.contains("```") {
         return content.to_string();
     }
-    
+
     let mut result = String::with_capacity(content.len() + 32);
     let mut in_code_block = false;
-    
+
     for line in content.lines() {
         let trimmed = line.trim_start();
-        
+
         if let Some(after_fence) = trimmed.strip_prefix("```") {
             if !in_code_block {
                 // Opening fence - check if it has a language
@@ -134,16 +134,16 @@ fn fix_bare_code_fences(content: &str) -> String {
                 in_code_block = false;
             }
         }
-        
+
         result.push_str(line);
         result.push('\n');
     }
-    
+
     // Remove trailing newline if original didn't have one
     if !content.ends_with('\n') && result.ends_with('\n') {
         result.pop();
     }
-    
+
     result
 }
 
@@ -179,7 +179,7 @@ fn is_markdown_table_separator(line: &str) -> bool {
 
 /// Format markdown tables as properly aligned ASCII tables.
 /// tui-markdown doesn't handle tables well, so we preprocess them.
-/// 
+///
 /// Only processes strict markdown tables that:
 /// - Have rows starting and ending with |
 /// - Have a separator row like |---|---|
@@ -189,15 +189,15 @@ fn format_markdown_tables(content: &str) -> String {
     if !content.contains('|') {
         return content.to_string();
     }
-    
+
     let mut result = String::with_capacity(content.len() + 256);
     let mut table_lines: Vec<&str> = Vec::new();
     let mut has_separator = false;
     let mut in_code_block = false;
-    
+
     for line in content.lines() {
         let trimmed = line.trim();
-        
+
         // Track code blocks to avoid processing tables inside them
         if trimmed.starts_with("```") {
             in_code_block = !in_code_block;
@@ -219,17 +219,17 @@ fn format_markdown_tables(content: &str) -> String {
             result.push('\n');
             continue;
         }
-        
+
         if in_code_block {
             result.push_str(line);
             result.push('\n');
             continue;
         }
-        
+
         // Strict table detection
         let is_table_row = is_markdown_table_row(line);
         let is_separator = is_markdown_table_separator(line);
-        
+
         if is_table_row || (is_separator && !table_lines.is_empty()) {
             table_lines.push(line);
             if is_separator {
@@ -254,7 +254,7 @@ fn format_markdown_tables(content: &str) -> String {
             result.push('\n');
         }
     }
-    
+
     // Flush any remaining table
     if !table_lines.is_empty() {
         if has_separator && table_lines.len() >= 2 {
@@ -266,12 +266,12 @@ fn format_markdown_tables(content: &str) -> String {
             }
         }
     }
-    
+
     // Remove trailing newline if original didn't have one
     if !content.ends_with('\n') && result.ends_with('\n') {
         result.pop();
     }
-    
+
     result
 }
 
@@ -280,37 +280,37 @@ fn render_table(lines: &[&str]) -> String {
     // Parse cells from each row
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut separator_idx: Option<usize> = None;
-    
+
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        
+
         // Check if this is a separator line (|---|---|)
-        if trimmed.chars().all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace()) 
+        if trimmed.chars().all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
             && trimmed.contains('-') {
             separator_idx = Some(i);
             continue;
         }
-        
+
         // Parse cells
         let cells: Vec<String> = trimmed
             .trim_matches('|')
             .split('|')
             .map(|c| c.trim().to_string())
             .collect();
-        
+
         if !cells.is_empty() && !cells.iter().all(|c| c.is_empty()) {
             rows.push(cells);
         }
     }
-    
+
     if rows.is_empty() {
         return lines.join("\n") + "\n";
     }
-    
+
     // Calculate column widths
     let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
     let mut col_widths: Vec<usize> = vec![0; num_cols];
-    
+
     for row in &rows {
         for (i, cell) in row.iter().enumerate() {
             if i < num_cols {
@@ -318,21 +318,21 @@ fn render_table(lines: &[&str]) -> String {
             }
         }
     }
-    
+
     // Ensure minimum width
     for w in &mut col_widths {
         *w = (*w).max(3);
     }
-    
+
     let mut output = String::new();
-    
+
     // Box drawing characters
     let h = "─";
     let v = "│";
     let tl = "┌"; let tm = "┬"; let tr = "┐";
     let ml = "├"; let mm = "┼"; let mr = "┤";
     let bl = "└"; let bm = "┴"; let br = "┘";
-    
+
     // Top border
     output.push_str(tl);
     for (i, &w) in col_widths.iter().enumerate() {
@@ -340,7 +340,7 @@ fn render_table(lines: &[&str]) -> String {
         output.push_str(if i < num_cols - 1 { tm } else { tr });
     }
     output.push('\n');
-    
+
     // Rows
     for (row_idx, row) in rows.iter().enumerate() {
         output.push_str(v);
@@ -353,7 +353,7 @@ fn render_table(lines: &[&str]) -> String {
             output.push_str(v);
         }
         output.push('\n');
-        
+
         // Separator after header (first row) or if explicitly marked
         if row_idx == 0 && (separator_idx.is_some() || rows.len() > 1) {
             output.push_str(ml);
@@ -364,7 +364,7 @@ fn render_table(lines: &[&str]) -> String {
             output.push('\n');
         }
     }
-    
+
     // Bottom border
     output.push_str(bl);
     for (i, &w) in col_widths.iter().enumerate() {
@@ -372,7 +372,7 @@ fn render_table(lines: &[&str]) -> String {
         output.push_str(if i < num_cols - 1 { bm } else { br });
     }
     output.push('\n');
-    
+
     // Wrap in a code block so tui-markdown preserves newlines
     format!("```text\n{}\n```\n", output.trim_end())
 }
@@ -452,7 +452,7 @@ impl DisplayMessage {
         // Fix bare code fences (```) to have a language tag (```text)
         // This prevents tui-markdown from warning about missing syntax definitions
         let content = fix_bare_code_fences(&content);
-        
+
         // Format markdown tables as ASCII box tables for proper display
         let content = format_markdown_tables(&content);
 
@@ -487,8 +487,8 @@ impl DisplayMessage {
                 MessageRole::ToolResult => "📎",
                 MessageRole::Thinking => "💭",
             };
-            if matches!(role, MessageRole::User | MessageRole::Assistant | MessageRole::Info | 
-                       MessageRole::Success | MessageRole::Warning | MessageRole::Error | 
+            if matches!(role, MessageRole::User | MessageRole::Assistant | MessageRole::Info |
+                       MessageRole::Success | MessageRole::Warning | MessageRole::Error |
                        MessageRole::System | MessageRole::ToolCall | MessageRole::ToolResult |
                        MessageRole::Thinking) {
                 let icon = icon_fn();
