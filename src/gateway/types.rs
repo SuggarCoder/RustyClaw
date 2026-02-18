@@ -3,6 +3,8 @@ use crate::providers;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use std::path::PathBuf;
+
 pub use crate::gateway::protocol::types::{
     ChatMessage, MediaRef, ModelResponse, ParsedToolCall, ToolCallResult,
 };
@@ -10,6 +12,11 @@ pub use crate::gateway::protocol::types::{
 #[derive(Debug, Clone)]
 pub struct GatewayOptions {
     pub listen: String,
+    /// Path to TLS certificate file (PEM). When set together with `tls_key`,
+    /// the gateway will accept WSS (WebSocket Secure) connections.
+    pub tls_cert: Option<PathBuf>,
+    /// Path to TLS private key file (PEM).
+    pub tls_key: Option<PathBuf>,
 }
 
 // ── Chat protocol types ─────────────────────────────────────────────────────

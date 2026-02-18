@@ -70,6 +70,8 @@ impl App {
                     &[],
                     api_key.as_deref(),
                     vault_password.as_deref(),
+                    self.state.config.tls_cert.as_deref(),
+                    self.state.config.tls_key.as_deref(),
                 ) {
                     Ok(pid) => {
                         self.state.messages.push(DisplayMessage::success(format!(

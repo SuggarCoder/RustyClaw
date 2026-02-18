@@ -90,6 +90,12 @@ pub struct Config {
     /// Per-tool permission overrides. Tools not listed here default to Allow.
     #[serde(default)]
     pub tool_permissions: HashMap<String, crate::tools::ToolPermission>,
+    /// Path to TLS certificate file (PEM) for WSS gateway connections.
+    #[serde(default)]
+    pub tls_cert: Option<PathBuf>,
+    /// Path to TLS private key file (PEM) for WSS gateway connections.
+    #[serde(default)]
+    pub tls_key: Option<PathBuf>,
 }
 
 /// Configuration for a messenger backend.
@@ -165,6 +171,8 @@ impl Default for Config {
             system_prompt: None,
             messenger_poll_interval_ms: None,
             tool_permissions: HashMap::new(),
+            tls_cert: None,
+            tls_key: None,
         }
     }
 }

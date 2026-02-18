@@ -159,14 +159,14 @@
 
 10. **WhatsApp messenger backend** — OpenClaw supports WhatsApp; RustyClaw does not
 11. **Slack messenger backend** — OpenClaw supports Slack; RustyClaw does not
-12. **Gateway WSS/TLS support** — OpenClaw supports `wss://`; RustyClaw only supports `ws://`
-13. **Sandbox enforcement** — Landlock and PathValidation modes are stubs; only bwrap provides real isolation
-14. **SECURITY.md accuracy** — document references wrong crate (`keyring` instead of `securestore`) and lists outdated dependency versions
+12. **Sandbox enforcement** — Landlock and PathValidation modes are stubs; only bwrap provides real isolation
+13. **SECURITY.md accuracy** — document references wrong crate (`keyring` instead of `securestore`) and lists outdated dependency versions
 
 ### ✅ Previously Missing, Now Implemented
 
 The following items were listed as "Not implemented" in the original Gap Analysis but have since been completed:
 
+- Gateway WSS/TLS support (rustls, `--tls-cert`/`--tls-key` flags, config `tls_cert`/`tls_key`) — `src/gateway/mod.rs`
 - Process management (list, poll, log, write, kill) — `src/process_manager.rs`, `src/tools/runtime.rs`
 - Memory system (memory_search BM25, memory_get) — `src/memory.rs`, `src/tools/memory_tools.rs`
 - Session/multi-agent tools (list, spawn, send, history, status) — `src/sessions.rs`, `src/tools/sessions_tools.rs`
@@ -209,5 +209,5 @@ The following items were listed as "Not implemented" in the original Gap Analysi
 | Skills (loading, format support) | ✅ Complete | Load + gate checks + prompt injection |
 | Messengers | ⚠️ Partial | Webhook, Console, Discord, Telegram, Signal (missing WhatsApp, Slack) |
 | Provider streaming | ✅ Complete | OpenAI SSE + Anthropic SSE |
-| Gateway TLS (WSS) | ❌ Missing | Only ws:// supported |
+| Gateway TLS (WSS) | ✅ Complete | rustls TLS acceptor, `--tls-cert`/`--tls-key` |
 | Sandbox enforcement | ⚠️ Partial | Only bwrap works; Landlock/PathValidation are stubs |

@@ -82,6 +82,12 @@ struct RunArgs {
     /// WebSocket listen URL (ws://host:port) — overrides --bind/--port
     #[arg(long = "listen", alias = "url", alias = "ws", value_name = "WS_URL")]
     listen: Option<String>,
+    /// Path to TLS certificate file (PEM) for WSS connections
+    #[arg(long, value_name = "PATH")]
+    tls_cert: Option<std::path::PathBuf>,
+    /// Path to TLS private key file (PEM) for WSS connections
+    #[arg(long, value_name = "PATH")]
+    tls_key: Option<std::path::PathBuf>,
 }
 
 impl Default for RunArgs {
@@ -95,6 +101,8 @@ impl Default for RunArgs {
             force: false,
             verbose: false,
             listen: None,
+            tls_cert: None,
+            tls_key: None,
         }
     }
 }
@@ -132,7 +140,12 @@ async fn main() -> Result<()> {
         .listen
         .unwrap_or_else(|| format!("{}:{}", host, args.port));
 
-    println!("{}", t::icon_ok(&format!("Gateway listening on {}", t::info(&format!("ws://{}", listen)))));
+    // Resolve TLS paths: CLI args override config
+    let tls_cert = args.tls_cert.or(config.tls_cert.clone());
+    let tls_key = args.tls_key.or(config.tls_key.clone());
+    let scheme = if tls_cert.is_some() { "wss" } else { "ws" };
+
+    println!("{}", t::icon_ok(&format!("Gateway listening on {}", t::info(&format!("{}://{}", scheme, listen)))));
 
     // ── Open the secrets vault ───────────────────────────────────────────
     //
@@ -292,7 +305,7 @@ async fn main() -> Result<()> {
         let shared_skills: rustyclaw::gateway::SharedSkillManager =
             std::sync::Arc::new(tokio::sync::Mutex::new(sm));
 
-        run_gateway(config, GatewayOptions { listen }, model_ctx, shared_vault, shared_skills, cancel).await
+        run_gateway(config, GatewayOptions { listen, tls_cert, tls_key }, model_ctx, shared_vault, shared_skills, cancel).await
     };
     daemon::remove_pid(&settings_dir);
 

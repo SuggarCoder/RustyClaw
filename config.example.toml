@@ -16,6 +16,11 @@ use_secrets = true
 # Blank lines between messages in the TUI (0 = compact, 1 = comfortable)
 # message_spacing = 1
 
+# TLS configuration for WSS (WebSocket Secure) gateway connections.
+# Both tls_cert and tls_key must be set to enable WSS.
+# tls_cert = "/path/to/cert.pem"
+# tls_key = "/path/to/key.pem"
+
 # Messenger configurations
 # [[messengers]]
 # name = "slack"

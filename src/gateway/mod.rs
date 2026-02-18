@@ -46,6 +46,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message;
@@ -55,8 +56,15 @@ use tokio_util::sync::CancellationToken;
 /// Shared flag for cancelling the tool loop from another task.
 pub type ToolCancelFlag = Arc<AtomicBool>;
 
+/// Trait alias for an async stream that can be either a plain TCP or TLS stream.
+trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> AsyncStream for T {}
+
+/// A boxed stream that is either a plain TCP stream or a TLS-wrapped one.
+type MaybeTlsStream = Box<dyn AsyncStream>;
+
 /// Type alias for the server-side WebSocket write half.
-type WsWriter = SplitSink<WebSocketStream<tokio::net::TcpStream>, Message>;
+type WsWriter = SplitSink<WebSocketStream<MaybeTlsStream>, Message>;
 
 /// Gateway-owned secrets vault, shared across connections.
 ///
@@ -180,6 +188,36 @@ pub async fn run_gateway(
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind gateway to {}", addr))?;
+
+    // ── Build TLS acceptor if cert/key are configured ───────────────
+    let tls_acceptor: Option<tokio_rustls::TlsAcceptor> =
+        match (&options.tls_cert, &options.tls_key) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert_pem = std::fs::read(cert_path)
+                    .with_context(|| format!("Failed to read TLS cert: {}", cert_path.display()))?;
+                let key_pem = std::fs::read(key_path)
+                    .with_context(|| format!("Failed to read TLS key: {}", key_path.display()))?;
+
+                let certs: Vec<_> = rustls_pemfile::certs(&mut &cert_pem[..])
+                    .collect::<Result<Vec<_>, _>>()
+                    .context("Failed to parse TLS certificate PEM")?;
+                let key = rustls_pemfile::private_key(&mut &key_pem[..])
+                    .context("Failed to parse TLS private key PEM")?
+                    .context("No private key found in PEM file")?;
+
+                let tls_config = tokio_rustls::rustls::ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(certs, key)
+                    .context("Invalid TLS certificate/key")?;
+
+                eprintln!("[gateway] TLS enabled (WSS)");
+                Some(tokio_rustls::TlsAcceptor::from(Arc::new(tls_config)))
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                anyhow::bail!("Both tls_cert and tls_key must be specified for WSS support");
+            }
+            (None, None) => None,
+        };
 
     // If the provider uses Copilot session tokens, check for:
     // 1. Imported session token (GITHUB_COPILOT_SESSION) - use until expiry
@@ -319,9 +357,23 @@ pub async fn run_gateway(
                 let skill_clone = skill_mgr.clone();
                 let limiter_clone = rate_limiter.clone();
                 let child_cancel = cancel.child_token();
+                let tls = tls_acceptor.clone();
                 tokio::spawn(async move {
+                    // Wrap in TLS if configured, otherwise use plain TCP.
+                    let boxed_stream: MaybeTlsStream = if let Some(acceptor) = tls {
+                        match acceptor.accept(stream).await {
+                            Ok(tls_stream) => Box::new(tls_stream),
+                            Err(err) => {
+                                eprintln!("TLS handshake failed from {}: {}", peer, err);
+                                return;
+                            }
+                        }
+                    } else {
+                        Box::new(stream)
+                    };
+
                     if let Err(err) = handle_connection(
-                        stream, peer, shared_cfg, shared_ctx,
+                        boxed_stream, peer, shared_cfg, shared_ctx,
                         session_clone, vault_clone, skill_clone,
                         limiter_clone, child_cancel,
                     ).await {
@@ -336,7 +388,7 @@ pub async fn run_gateway(
 }
 
 async fn handle_connection(
-    stream: tokio::net::TcpStream,
+    stream: MaybeTlsStream,
     peer: SocketAddr,
     shared_config: SharedConfig,
     shared_model_ctx: SharedModelCtx,
@@ -346,7 +398,7 @@ async fn handle_connection(
     rate_limiter: auth::RateLimiter,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let ws_stream = tokio_tungstenite::accept_async(stream)
+    let ws_stream: WebSocketStream<MaybeTlsStream> = tokio_tungstenite::accept_async(stream)
         .await
         .context("WebSocket handshake failed")?;
     let (mut writer, mut reader) = ws_stream.split();

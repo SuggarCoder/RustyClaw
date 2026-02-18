@@ -119,9 +119,12 @@ pub async fn resolve_bearer_token(
 ///
 /// Reads WebSocket binary messages until we get a frame with
 /// `ClientFrameType::AuthResponse`, or the connection drops.
-pub async fn wait_for_auth_response(
-    reader: &mut futures_util::stream::SplitStream<WebSocketStream<tokio::net::TcpStream>>,
-) -> Result<String> {
+pub async fn wait_for_auth_response<S>(
+    reader: &mut futures_util::stream::SplitStream<WebSocketStream<S>>,
+) -> Result<String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     while let Some(msg) = reader.next().await {
         match msg {
             Ok(Message::Binary(data)) => {

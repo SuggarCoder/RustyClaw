@@ -103,6 +103,8 @@ pub fn start(
     extra_args: &[String],
     model_api_key: Option<&str>,
     vault_password: Option<&str>,
+    tls_cert: Option<&Path>,
+    tls_key: Option<&Path>,
 ) -> Result<u32> {
     // If already running, bail.
     if let DaemonStatus::Running { pid } = status(settings_dir) {
@@ -147,6 +149,14 @@ pub fn start(
     // Pass the vault password so the gateway can unlock the secrets vault.
     if let Some(pw) = vault_password {
         cmd.env("RUSTYCLAW_VAULT_PASSWORD", pw);
+    }
+
+    // Pass TLS certificate and key paths for WSS support.
+    if let Some(cert) = tls_cert {
+        cmd.arg("--tls-cert").arg(cert);
+    }
+    if let Some(key) = tls_key {
+        cmd.arg("--tls-key").arg(key);
     }
 
     for a in extra_args {

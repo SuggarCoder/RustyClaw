@@ -619,12 +619,16 @@ async fn main() -> Result<()> {
                         &[],
                         None,
                         vault_password.as_deref(),
+                        config.tls_cert.as_deref(),
+                        config.tls_key.as_deref(),
                     ) {
                         Ok(pid) => {
+                            let scheme = if config.tls_cert.is_some() { "wss" } else { "ws" };
                             t::spinner_ok(&sp, &format!(
                                 "Gateway started (PID {}, {})",
                                 pid,
-                                t::info(&format!("ws://{}:{}",
+                                t::info(&format!("{}://{}:{}",
+                                    scheme,
                                     if bind == "loopback" { "127.0.0.1" } else { bind },
                                     port
                                 )),
@@ -696,12 +700,16 @@ async fn main() -> Result<()> {
                         &[],
                         None,
                         vault_password.as_deref(),
+                        config.tls_cert.as_deref(),
+                        config.tls_key.as_deref(),
                     ) {
                         Ok(pid) => {
+                            let scheme = if config.tls_cert.is_some() { "wss" } else { "ws" };
                             t::spinner_ok(&sp, &format!(
                                 "Gateway restarted (PID {}, {})",
                                 pid,
-                                t::info(&format!("ws://{}:{}",
+                                t::info(&format!("{}://{}:{}",
+                                    scheme,
                                     if bind == "loopback" { "127.0.0.1" } else { bind },
                                     port
                                 )),
@@ -783,8 +791,11 @@ async fn main() -> Result<()> {
                         _ => "127.0.0.1",
                     };
                     let listen = format!("{}:{}", host, args.port);
+                    let tls_cert = config.tls_cert.clone();
+                    let tls_key = config.tls_key.clone();
+                    let scheme = if tls_cert.is_some() { "wss" } else { "ws" };
                     println!("{}", rustyclaw::theme::icon_ok(
-                        &format!("RustyClaw gateway listening on {}", rustyclaw::theme::info(&format!("ws://{}", listen)))
+                        &format!("RustyClaw gateway listening on {}", rustyclaw::theme::info(&format!("{}://{}", scheme, listen)))
                     ));
 
                     // Open the secrets vault — the gateway owns it.
@@ -828,7 +839,7 @@ async fn main() -> Result<()> {
                     // Load skills for the gateway from multiple directories.
                     // Uses consolidated skills_dirs from config.
                     let skills_dirs = config.skills_dirs();
-                    
+
                     let mut sm = SkillManager::with_dirs(skills_dirs);
                     if let Err(e) = sm.load_skills() {
                         eprintln!("⚠ Could not load skills: {}", e);
@@ -839,7 +850,7 @@ async fn main() -> Result<()> {
                     let shared_skills: rustyclaw::gateway::SharedSkillManager =
                         std::sync::Arc::new(tokio::sync::Mutex::new(sm));
 
-                    run_gateway(config, GatewayOptions { listen }, model_ctx, shared_vault, shared_skills, cancel).await?;
+                    run_gateway(config, GatewayOptions { listen, tls_cert, tls_key }, model_ctx, shared_vault, shared_skills, cancel).await?;
                 }
             }
         }
@@ -848,7 +859,7 @@ async fn main() -> Result<()> {
         Commands::Skills(sub) => {
             // Use consolidated skills_dirs from config
             let skills_dirs = config.skills_dirs();
-            
+
             let mut sm = SkillManager::with_dirs(skills_dirs);
             sm.load_skills()?;
 
