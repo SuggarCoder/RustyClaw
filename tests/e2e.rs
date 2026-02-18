@@ -5,8 +5,7 @@
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::process::Command;
 
 /// Get the rustyclaw binary path
 fn binary_path() -> PathBuf {
@@ -41,11 +40,9 @@ fn test_e2e_fresh_setup() {
         .env("HOME", &workspace)
         .output()
         .expect("Failed to run doctor");
-    
     // Should complete without crashing
     println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
     println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-    
     fs::remove_dir_all(&workspace).ok();
 }
 
@@ -179,14 +176,12 @@ fn test_e2e_config_generation() {
 kind = "mock"
 "#).unwrap();
     
-    let output = Command::new(&binary)
+    let _ = Command::new(&binary)
         .args(["doctor", "--config"])
         .arg(&config_path)
         .output()
         .expect("Failed to run doctor with config");
-    
     // Should be able to read the config
-    
     fs::remove_dir_all(&workspace).ok();
 }
 

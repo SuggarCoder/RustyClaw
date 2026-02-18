@@ -8,11 +8,9 @@ use async_trait::async_trait;
 use matrix_sdk::{
     config::SyncSettings,
     ruma::{
-        api::client::room::create_room::v3::Request as CreateRoomRequest,
         events::room::message::{
             MessageType, OriginalSyncRoomMessageEvent, RoomMessageEventContent,
-        },
-        OwnedRoomId, OwnedUserId, RoomId, UserId,
+        }, OwnedUserId, RoomId, UserId,
     },
     Client, Room,
 };
@@ -217,7 +215,7 @@ impl Messenger for MatrixMessenger {
 
         // Handle reply
         if let Some(reply_to) = opts.reply_to {
-            if let Ok(event_id) = matrix_sdk::ruma::OwnedEventId::try_from(reply_to) {
+            if let Ok(_event_id) = matrix_sdk::ruma::OwnedEventId::try_from(reply_to) {
                 // For proper threading, we'd need to fetch the original event
                 // For now, just reference it in the body
                 let reply_body = format!("> Replying to {}\n\n{}", reply_to, opts.content);

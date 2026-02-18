@@ -11,7 +11,7 @@ pub mod health;
 mod helpers;
 mod messenger_handler;
 mod providers;
-mod protocol;
+pub mod protocol;
 mod secrets_handler;
 mod skills_handler;
 mod types;
@@ -19,7 +19,7 @@ mod types;
 // Re-export protocol types
 pub use protocol::{
     ClientFrameType, ServerFrameType, StatusType, ServerFrame, ClientFrame,
-    serialize_frame, deserialize_frame, ServerPayload, ClientPayload,
+    serialize_frame, deserialize_frame, ServerPayload, ClientPayload, SecretEntryDto,
     FrameAction, server_frame_to_action,
 };
 
@@ -43,7 +43,6 @@ use anyhow::{Context, Result};
 use dirs;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -74,8 +73,15 @@ pub type SharedConfig = Arc<RwLock<Config>>;
 /// Shared model context, updated on reload.
 pub type SharedModelCtx = Arc<RwLock<Option<Arc<ModelContext>>>>;
 
-// Re-export protocol helpers for internal use
-pub(crate) use protocol::server::parse_client_frame;
+// Re-export protocol helpers for external use
+pub use protocol::server::{
+    parse_client_frame, send_frame,
+    send_vault_unlocked, send_secrets_list_result,
+    send_secrets_store_result, send_secrets_get_result, send_secrets_delete_result,
+    send_secrets_peek_result, send_secrets_set_policy_result, send_secrets_set_disabled_result,
+    send_secrets_delete_credential_result, send_secrets_has_totp_result, send_secrets_setup_totp_result,
+    send_secrets_verify_totp_result, send_secrets_remove_totp_result, send_reload_result,
+};
 
 // Re-export validate_model_connection for external use
 pub use providers::validate_model_connection;
@@ -187,7 +193,7 @@ pub async fn run_gateway(
         // First check for imported session token in our vault
         let mut vault_guard = vault.lock().await;
         let session_result = vault_guard.get_secret("GITHUB_COPILOT_SESSION", true);
-        
+
         let mut session_from_import = match &session_result {
             Ok(Some(json_str)) => {
                 eprintln!("  ✓ Found GITHUB_COPILOT_SESSION in vault");
@@ -196,15 +202,15 @@ pub async fn run_gateway(
                     .and_then(|json| {
                         let token = json.get("session_token")?.as_str()?.to_string();
                         let expires_at = json.get("expires_at")?.as_i64()?;
-                        
+
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs() as i64;
-                        
+
                         let remaining = expires_at - now;
                         eprintln!("    Session expires in {}s", remaining);
-                        
+
                         if remaining > 60 {
                             Some(CopilotSession::from_session_token(token, expires_at))
                         } else {
@@ -261,7 +267,7 @@ pub async fn run_gateway(
         match messenger_handler::create_messenger_manager(&config).await {
             Ok(mgr) => {
                 let shared_mgr: SharedMessengerManager = Arc::new(Mutex::new(mgr));
-                
+
                 // Spawn messenger loop
                 let messenger_config = config.clone();
                 let messenger_ctx = model_ctx.clone();
@@ -269,7 +275,7 @@ pub async fn run_gateway(
                 let messenger_skills = skill_mgr.clone();
                 let messenger_cancel = cancel.child_token();
                 let mgr_clone = shared_mgr.clone();
-                
+
                 tokio::spawn(async move {
                     if let Err(e) = messenger_handler::run_messenger_loop(
                         messenger_config,
@@ -282,7 +288,7 @@ pub async fn run_gateway(
                         eprintln!("[gateway] Messenger loop error: {}", e);
                     }
                 });
-                
+
                 Some(shared_mgr)
             }
             Err(e) => {
@@ -358,19 +364,24 @@ async fn handle_connection(
     if config.totp_enabled {
         // Check rate limit first.
         if let Some(remaining) = auth::check_rate_limit(&rate_limiter, peer_ip).await {
-            let frame = json!({
-                "type": "auth_locked",
-                "message": format!("Too many failed attempts. Try again in {}s.", remaining),
-                "retry_after": remaining,
-            });
-            writer.send(Message::Text(frame.to_string().into())).await?;
+            send_frame(
+                &mut writer,
+                &ServerFrame {
+                    frame_type: ServerFrameType::AuthLocked,
+                    payload: ServerPayload::AuthLocked {
+                        message: format!("Too many failed attempts. Try again in {}s.", remaining),
+                        retry_after: Some(remaining),
+                    },
+                },
+            )
+            .await?;
             writer.send(Message::Close(None)).await?;
             return Ok(());
         }
 
         // Send challenge.
-        let challenge = json!({ "type": "auth_challenge", "method": "totp" });
-        writer.send(Message::Text(challenge.to_string().into())).await
+        protocol::server::send_auth_challenge(&mut writer, "totp")
+            .await
             .context("Failed to send auth_challenge")?;
 
         // Allow up to 3 attempts before closing the connection.
@@ -393,8 +404,8 @@ async fn handle_connection(
                     };
                     if valid {
                         auth::clear_rate_limit(&rate_limiter, peer_ip).await;
-                        let ok = json!({ "type": "auth_result", "ok": true });
-                        writer.send(Message::Text(ok.to_string().into())).await?;
+                        protocol::server::send_auth_result(&mut writer, true, None, None)
+                            .await?;
                         break; // Authentication successful, continue to main loop
                     } else {
                         attempts += 1;
@@ -405,14 +416,14 @@ async fn handle_connection(
                                 "Invalid code. Too many failures — locked out for {}s.",
                                 TOTP_LOCKOUT_SECS,
                             );
-                            let fail = json!({ "type": "auth_result", "ok": false, "message": msg });
-                            writer.send(Message::Text(fail.to_string().into())).await?;
+                            protocol::server::send_auth_result(&mut writer, false, Some(&msg), None)
+                                .await?;
                             writer.send(Message::Close(None)).await?;
                             return Ok(());
                         } else if attempts >= MAX_TOTP_ATTEMPTS {
                             let msg = "Invalid code. Maximum attempts exceeded.";
-                            let fail = json!({ "type": "auth_result", "ok": false, "message": msg });
-                            writer.send(Message::Text(fail.to_string().into())).await?;
+                            protocol::server::send_auth_result(&mut writer, false, Some(msg), None)
+                                .await?;
                             writer.send(Message::Close(None)).await?;
                             return Ok(());
                         } else {
@@ -422,13 +433,8 @@ async fn handle_connection(
                                 remaining,
                                 if remaining == 1 { "" } else { "s" }
                             );
-                            let retry = json!({
-                                "type": "auth_result",
-                                "ok": false,
-                                "retry": true,
-                                "message": msg,
-                            });
-                            writer.send(Message::Text(retry.to_string().into())).await?;
+                            protocol::server::send_auth_result(&mut writer, false, Some(&msg), Some(true))
+                                .await?;
                             // Continue loop to allow retry
                         }
                     }
@@ -438,13 +444,14 @@ async fn handle_connection(
                     return Ok(());
                 }
                 Err(_) => {
-                    let timeout = json!({
-                        "type": "auth_result",
-                        "ok": false,
-                        "message": "Authentication timed out.",
-                    });
-                    let _ = writer.send(Message::Text(timeout.to_string().into())).await;
-                    let _ = writer.send(Message::Close(None)).await;
+                    protocol::server::send_auth_result(
+                        &mut writer,
+                        false,
+                        Some("Authentication timed out."),
+                        None,
+                    )
+                    .await?;
+                    writer.send(Message::Close(None)).await?;
                     return Ok(());
                 }
             }
@@ -458,29 +465,25 @@ async fn handle_connection(
     };
 
     // ── Send hello ──────────────────────────────────────────────────
-    let mut hello = json!({
-        "type": "hello",
-        "agent": "rustyclaw",
-        "settings_dir": config.settings_dir,
-        "vault_locked": vault_is_locked,
-    });
-    if let Some(ref ctx) = model_ctx {
-        hello["provider"] = serde_json::Value::String(ctx.provider.clone());
-        hello["model"] = serde_json::Value::String(ctx.model.clone());
-    }
-    writer
-        .send(Message::Text(hello.to_string().into()))
-        .await
-        .context("Failed to send hello message")?;
+    protocol::server::send_hello(
+        &mut writer,
+        "rustyclaw",
+        &config.settings_dir.to_string_lossy(),
+        vault_is_locked,
+        model_ctx.as_ref().map(|c| c.provider.as_str()),
+        model_ctx.as_ref().map(|c| c.model.as_str()),
+    )
+    .await
+    .context("Failed to send hello message")?;
 
     if vault_is_locked {
-        writer
-            .send(Message::Text(
-                helpers::status_frame("vault_locked", "Secrets vault is locked — provide password to unlock")
-                    .into(),
-            ))
-            .await
-            .context("Failed to send vault_locked status")?;
+        protocol::server::send_status(
+            &mut writer,
+            StatusType::VaultLocked,
+            "Secrets vault is locked — provide password to unlock",
+        )
+        .await
+        .context("Failed to send vault_locked status")?;
     }
 
     // ── Report model status to the freshly-connected client ────────
@@ -492,33 +495,27 @@ async fn handle_connection(
 
             // 1. Model configured
             let detail = format!("{} / {}", display, ctx.model);
-            writer
-                .send(Message::Text(
-                    helpers::status_frame("model_configured", &detail).into(),
-                ))
+            protocol::server::send_status(&mut writer, StatusType::ModelConfigured, &detail)
                 .await
                 .context("Failed to send model_configured status")?;
 
             // 2. Credentials
             if ctx.api_key.is_some() {
-                writer
-                    .send(Message::Text(
-                        helpers::status_frame("credentials_loaded", &format!("{} API key loaded", display))
-                            .into(),
-                    ))
-                    .await
-                    .context("Failed to send credentials_loaded status")?;
+                protocol::server::send_status(
+                    &mut writer,
+                    StatusType::CredentialsLoaded,
+                    &format!("{} API key loaded", display),
+                )
+                .await
+                .context("Failed to send credentials_loaded status")?;
             } else if crate_providers::secret_key_for_provider(&ctx.provider).is_some() {
-                writer
-                    .send(Message::Text(
-                        helpers::status_frame(
-                            "credentials_missing",
-                            &format!("No API key for {} — model calls will fail", display),
-                        )
-                        .into(),
-                    ))
-                    .await
-                    .context("Failed to send credentials_missing status")?;
+                protocol::server::send_status(
+                    &mut writer,
+                    StatusType::CredentialsMissing,
+                    &format!("No API key for {} — model calls will fail", display),
+                )
+                .await
+                .context("Failed to send credentials_missing status")?;
             }
 
             // 3. Validate the connection with a lightweight probe
@@ -545,79 +542,64 @@ async fn handle_connection(
                 ctx.clone()
             };
 
-            writer
-                .send(Message::Text(
-                    helpers::status_frame("model_connecting", &format!("Probing {} …", ctx.base_url))
-                        .into(),
-                ))
-                .await
-                .context("Failed to send model_connecting status")?;
+            protocol::server::send_status(
+                &mut writer,
+                StatusType::ModelConnecting,
+                &format!("Probing {} …", ctx.base_url),
+            )
+            .await
+            .context("Failed to send model_connecting status")?;
 
             match providers::validate_model_connection(&http, &probe_ctx, copilot_session.as_deref()).await {
                 ProbeResult::Ready => {
-                    writer
-                        .send(Message::Text(
-                            helpers::status_frame(
-                                "model_ready",
-                                &format!("{} / {} ready", display, ctx.model),
-                            )
-                            .into(),
-                        ))
-                        .await
-                        .context("Failed to send model_ready status")?;
+                    protocol::server::send_status(
+                        &mut writer,
+                        StatusType::ModelReady,
+                        &format!("{} / {} ready", display, ctx.model),
+                    )
+                    .await
+                    .context("Failed to send model_ready status")?;
                 }
                 ProbeResult::Connected { warning } => {
                     // Auth is fine, provider is reachable — the specific
                     // probe request wasn't accepted, but chat will likely
                     // work with the real request format.
-                    writer
-                        .send(Message::Text(
-                            helpers::status_frame(
-                                "model_ready",
-                                &format!("{} / {} connected (probe: {})", display, ctx.model, warning),
-                            )
-                            .into(),
-                        ))
-                        .await
-                        .context("Failed to send model_ready status")?;
+                    protocol::server::send_status(
+                        &mut writer,
+                        StatusType::ModelReady,
+                        &format!("{} / {} connected (probe: {})", display, ctx.model, warning),
+                    )
+                    .await
+                    .context("Failed to send model_ready status")?;
                 }
                 ProbeResult::AuthError { detail } => {
-                    writer
-                        .send(Message::Text(
-                            helpers::status_frame(
-                                "model_error",
-                                &format!("{} auth failed: {}", display, detail),
-                            )
-                            .into(),
-                        ))
-                        .await
-                        .context("Failed to send model_error status")?;
+                    protocol::server::send_status(
+                        &mut writer,
+                        StatusType::ModelError,
+                        &format!("{} auth failed: {}", display, detail),
+                    )
+                    .await
+                    .context("Failed to send model_error status")?;
                 }
                 ProbeResult::Unreachable { detail } => {
-                    writer
-                        .send(Message::Text(
-                            helpers::status_frame(
-                                "model_error",
-                                &format!("{} probe failed: {}", display, detail),
-                            )
-                            .into(),
-                        ))
-                        .await
-                        .context("Failed to send model_error status")?;
+                    protocol::server::send_status(
+                        &mut writer,
+                        StatusType::ModelError,
+                        &format!("{} probe failed: {}", display, detail),
+                    )
+                    .await
+                    .context("Failed to send model_error status")?;
                 }
             }
         }
         None => {
-            writer
-                .send(Message::Text(
-                    helpers::status_frame(
-                        "no_model",
-                        "No model configured — clients must send full credentials",
-                    )
-                    .into(),
-                ))
-                .await
-                .context("Failed to send no_model status")?;
+            protocol::server::send_status(
+                &mut writer,
+                StatusType::NoModel,
+                "No model configured — clients must send full credentials",
+            )
+            .await
+            .context("Failed to send no_model status")?;
         }
     }
 
@@ -637,26 +619,23 @@ async fn handle_connection(
                 _ = reader_cancel.cancelled() => break,
                 msg = reader.next() => {
                     match msg {
-                        Some(Ok(Message::Text(ref text))) => {
-                            // Check for cancel message
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
-                                if val.get("type").and_then(|t| t.as_str()) == Some("cancel") {
-                                    reader_tool_cancel.store(true, Ordering::Relaxed);
-                                    // Don't forward cancel messages, just set the flag
-                                    continue;
-                                }
-                            }
-                            // Forward text messages
-                            if msg_tx.send(Message::Text(text.clone())).await.is_err() {
-                                break; // Channel closed
-                            }
+                        Some(Ok(Message::Text(_))) => {
+                            // Text frames are not supported - skip them
+                            continue;
                         }
                         Some(Ok(Message::Binary(ref data))) => {
+                            eprintln!("[Gateway][DEBUG] Received Binary frame from client: {} bytes", data.len());
                             // Check for cancel message in binary
-                            if let Ok(frame) = parse_client_frame(data) {
-                                if frame.frame_type == ClientFrameType::Cancel {
-                                    reader_tool_cancel.store(true, Ordering::Relaxed);
-                                    continue;
+                            match parse_client_frame(data) {
+                                Ok(frame) => {
+                                    eprintln!("[Gateway][DEBUG] Parsed client frame: {:?}", frame.frame_type);
+                                    if frame.frame_type == ClientFrameType::Cancel {
+                                        reader_tool_cancel.store(true, Ordering::Relaxed);
+                                        continue;
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("[Gateway][DEBUG] Failed to parse client frame: {}", e);
                                 }
                             }
                             // Forward binary messages
@@ -665,11 +644,15 @@ async fn handle_connection(
                             }
                         }
                         Some(Ok(msg)) => {
+                            eprintln!("[Gateway][DEBUG] Received non-binary message from client: {:?}", msg);
                             if msg_tx.send(msg).await.is_err() {
                                 break;
                             }
                         }
-                        Some(Err(_)) => break,
+                        Some(Err(e)) => {
+                            eprintln!("[Gateway][DEBUG] Error reading message from client: {}", e);
+                            break;
+                        }
                         None => break,
                     }
                 }
@@ -690,384 +673,305 @@ async fn handle_connection(
                     None => break, // Channel closed (reader exited)
                 };
                 match message {
-                    Message::Text(text) => {
+                    Message::Binary(data) => {
+                        eprintln!("[Gateway][DEBUG] Handling Binary message from client: {} bytes", data.len());
                         // Reset cancel flag for new request
                         tool_cancel.store(false, Ordering::Relaxed);
 
-                        // ── Handle unlock_vault control message ─────
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
-                            if val.get("type").and_then(|t| t.as_str()) == Some("unlock_vault") {
-                                if let Some(pw) = val.get("password").and_then(|p| p.as_str()) {
-                                    let mut v = vault.lock().await;
-                                    v.set_password(pw.to_string());
-                                    // Try to access the vault to verify the password works.
-                                    // get_secret returns Err if the vault cannot be decrypted.
-                                    match v.get_secret("__vault_check__", true) {
-                                        Ok(_) => {
-                                            let ok = json!({
-                                                "type": "vault_unlocked",
-                                                "ok": true,
-                                            });
-                                            let _ = writer.send(Message::Text(ok.to_string().into())).await;
-                                        }
-                                        Err(e) => {
-                                            // Revert to locked state.
-                                            v.clear_password();
-                                            let fail = json!({
-                                                "type": "vault_unlocked",
-                                                "ok": false,
-                                                "message": format!("Failed to unlock vault: {}", e),
-                                            });
-                                            let _ = writer.send(Message::Text(fail.to_string().into())).await;
-                                        }
-                                    }
-                                }
+                        // Parse the binary frame
+                        let frame = match deserialize_frame::<ClientFrame>(&data) {
+                            Ok(f) => {
+                                eprintln!("[Gateway][DEBUG] Successfully deserialized ClientFrame: {:?}", f.frame_type);
+                                f
+                            },
+                            Err(e) => {
+                                eprintln!("[Gateway][DEBUG] Failed to deserialize ClientFrame: {}", e);
+                                // Send error response
+                                let error_frame = ServerFrame {
+                                    frame_type: ServerFrameType::Error,
+                                    payload: ServerPayload::Error {
+                                        ok: false,
+                                        message: format!("Failed to parse client frame: {}", e),
+                                    },
+                                };
+                                send_frame(&mut writer, &error_frame).await?;
                                 continue;
                             }
+                        };
 
-                            // ── Handle secrets control messages ──────
-                            let msg_type = val.get("type").and_then(|t| t.as_str());
-
-                            match msg_type {
-                                Some("secrets_list") => {
-                                    let mut v = vault.lock().await;
-                                    let entries = v.list_all_entries();
-                                    let json_entries: Vec<serde_json::Value> = entries.iter().map(|(name, entry)| {
-                                        let mut obj = serde_json::to_value(entry).unwrap_or_default();
-                                        if let Some(map) = obj.as_object_mut() {
-                                            map.insert("name".to_string(), json!(name));
-                                        }
-                                        obj
-                                    }).collect();
-                                    let resp = json!({
-                                        "type": "secrets_list_result",
-                                        "ok": true,
-                                        "entries": json_entries,
-                                    });
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_store") => {
-                                    let key = val.get("key").and_then(|k| k.as_str()).unwrap_or("");
-                                    let value = val.get("value").and_then(|v| v.as_str()).unwrap_or("");
-                                    let mut v = vault.lock().await;
-                                    let resp = match v.store_secret(key, value) {
-                                        Ok(()) => json!({
-                                            "type": "secrets_store_result",
-                                            "ok": true,
-                                            "message": format!("Secret '{}' stored.", key),
-                                        }),
-                                        Err(e) => json!({
-                                            "type": "secrets_store_result",
-                                            "ok": false,
-                                            "message": format!("Failed to store secret: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_get") => {
-                                    let key = val.get("key").and_then(|k| k.as_str()).unwrap_or("");
-                                    let mut v = vault.lock().await;
-                                    let resp = match v.get_secret(key, true) {
-                                        Ok(Some(value)) => json!({
-                                            "type": "secrets_get_result",
-                                            "ok": true,
-                                            "key": key,
-                                            "value": value,
-                                        }),
-                                        Ok(None) => json!({
-                                            "type": "secrets_get_result",
-                                            "ok": false,
-                                            "key": key,
-                                            "message": format!("Secret '{}' not found.", key),
-                                        }),
-                                        Err(e) => json!({
-                                            "type": "secrets_get_result",
-                                            "ok": false,
-                                            "key": key,
-                                            "message": format!("Failed to get secret: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_delete") => {
-                                    let key = val.get("key").and_then(|k| k.as_str()).unwrap_or("");
-                                    let mut v = vault.lock().await;
-                                    let resp = match v.delete_secret(key) {
-                                        Ok(()) => json!({
-                                            "type": "secrets_delete_result",
-                                            "ok": true,
-                                        }),
-                                        Err(e) => json!({
-                                            "type": "secrets_delete_result",
-                                            "ok": false,
-                                            "message": format!("Failed to delete: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_peek") => {
-                                    let name = val.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    let mut v = vault.lock().await;
-                                    let resp = match v.peek_credential_display(name) {
-                                        Ok(fields) => {
-                                            let field_arrays: Vec<serde_json::Value> = fields.iter()
-                                                .map(|(label, value)| json!([label, value]))
-                                                .collect();
-                                            json!({
-                                                "type": "secrets_peek_result",
-                                                "ok": true,
-                                                "fields": field_arrays,
-                                            })
-                                        }
-                                        Err(e) => json!({
-                                            "type": "secrets_peek_result",
-                                            "ok": false,
-                                            "message": format!("Failed to peek: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_set_policy") => {
-                                    let name = val.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    let policy_str = val.get("policy").and_then(|p| p.as_str()).unwrap_or("");
-                                    let skills_list = val.get("skills").and_then(|s| s.as_array())
-                                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<_>>())
-                                        .unwrap_or_default();
-                                    let policy = match policy_str {
-                                        "always" => Some(crate::secrets::AccessPolicy::Always),
-                                        "ask" => Some(crate::secrets::AccessPolicy::WithApproval),
-                                        "auth" => Some(crate::secrets::AccessPolicy::WithAuth),
-                                        "skill_only" => Some(crate::secrets::AccessPolicy::SkillOnly(skills_list)),
-                                        _ => None,
-                                    };
-                                    let mut v = vault.lock().await;
-                                    let resp = if let Some(policy) = policy {
-                                        match v.set_credential_policy(name, policy) {
-                                            Ok(()) => json!({
-                                                "type": "secrets_set_policy_result",
-                                                "ok": true,
-                                            }),
-                                            Err(e) => json!({
-                                                "type": "secrets_set_policy_result",
-                                                "ok": false,
-                                                "message": format!("Failed to set policy: {}", e),
-                                            }),
-                                        }
-                                    } else {
-                                        json!({
-                                            "type": "secrets_set_policy_result",
-                                            "ok": false,
-                                            "message": format!("Unknown policy: {}", policy_str),
-                                        })
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_set_disabled") => {
-                                    let name = val.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    let disabled = val.get("disabled").and_then(|d| d.as_bool()).unwrap_or(false);
-                                    let mut v = vault.lock().await;
-                                    let resp = match v.set_credential_disabled(name, disabled) {
-                                        Ok(()) => json!({
-                                            "type": "secrets_set_disabled_result",
-                                            "ok": true,
-                                        }),
-                                        Err(e) => json!({
-                                            "type": "secrets_set_disabled_result",
-                                            "ok": false,
-                                            "message": format!("Failed: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_delete_credential") => {
-                                    let name = val.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    let mut v = vault.lock().await;
-                                    // Also delete legacy bare key if present
-                                    let meta_key = format!("cred:{}", name);
-                                    let is_legacy = v.get_secret(&meta_key, true).ok().flatten().is_none();
-                                    if is_legacy {
-                                        let _ = v.delete_secret(name);
+                        // Handle the frame based on type
+                        match frame.payload {
+                            ClientPayload::UnlockVault { password } => {
+                                let mut v = vault.lock().await;
+                                v.set_password(password);
+                                match v.get_secret("__vault_check__", true) {
+                                    Ok(_) => {
+                                        send_vault_unlocked(&mut writer, true, None).await?;
                                     }
-                                    let resp = match v.delete_credential(name) {
-                                        Ok(()) => json!({
-                                            "type": "secrets_delete_credential_result",
-                                            "ok": true,
-                                        }),
-                                        Err(e) => json!({
-                                            "type": "secrets_delete_credential_result",
-                                            "ok": false,
-                                            "message": format!("Failed: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_has_totp") => {
-                                    let mut v = vault.lock().await;
-                                    let has_totp = v.has_totp();
-                                    let resp = json!({
-                                        "type": "secrets_has_totp_result",
-                                        "has_totp": has_totp,
-                                    });
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_setup_totp") => {
-                                    let mut v = vault.lock().await;
-                                    let resp = match v.setup_totp("rustyclaw") {
-                                        Ok(uri) => json!({
-                                            "type": "secrets_setup_totp_result",
-                                            "ok": true,
-                                            "uri": uri,
-                                        }),
-                                        Err(e) => json!({
-                                            "type": "secrets_setup_totp_result",
-                                            "ok": false,
-                                            "message": format!("Failed: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_verify_totp") => {
-                                    let code = val.get("code").and_then(|c| c.as_str()).unwrap_or("");
-                                    let mut v = vault.lock().await;
-                                    let resp = match v.verify_totp(code) {
-                                        Ok(valid) => json!({
-                                            "type": "secrets_verify_totp_result",
-                                            "ok": valid,
-                                        }),
-                                        Err(e) => json!({
-                                            "type": "secrets_verify_totp_result",
-                                            "ok": false,
-                                            "message": format!("Error: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("secrets_remove_totp") => {
-                                    let mut v = vault.lock().await;
-                                    let resp = match v.remove_totp() {
-                                        Ok(()) => json!({
-                                            "type": "secrets_remove_totp_result",
-                                            "ok": true,
-                                        }),
-                                        Err(e) => json!({
-                                            "type": "secrets_remove_totp_result",
-                                            "ok": false,
-                                            "message": format!("Failed: {}", e),
-                                        }),
-                                    };
-                                    let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                    continue;
-                                }
-                                Some("reload") => {
-                                    // ── Reload config + model context from disk ─────
-                                    let settings_dir = config.settings_dir.clone();
-                                    let config_path = settings_dir.join("config.toml");
-                                    match Config::load(Some(config_path)) {
-                                        Ok(new_config) => {
-                                            // Re-resolve model context from new config + vault
-                                            let new_model_ctx = {
-                                                let mut v = vault.lock().await;
-                                                ModelContext::resolve(&new_config, &mut v).ok().map(Arc::new)
-                                            };
-
-                                            let (provider, model) = if let Some(ref ctx) = new_model_ctx {
-                                                (ctx.provider.clone(), ctx.model.clone())
-                                            } else {
-                                                ("(none)".to_string(), "(none)".to_string())
-                                            };
-
-                                            // Update shared state so new connections pick up changes
-                                            {
-                                                let mut cfg = shared_config.write().await;
-                                                *cfg = new_config;
-                                            }
-                                            {
-                                                let mut ctx = shared_model_ctx.write().await;
-                                                *ctx = new_model_ctx.clone();
-                                            }
-
-                                            let resp = json!({
-                                                "type": "reload_result",
-                                                "ok": true,
-                                                "provider": provider,
-                                                "model": model,
-                                            });
-                                            let _ = writer.send(Message::Text(resp.to_string().into())).await;
-
-                                            // Send status update about new model
-                                            if let Some(ref ctx) = new_model_ctx {
-                                                let display = crate_providers::display_name_for_provider(&ctx.provider);
-                                                let detail = format!("{} / {} (reloaded)", display, ctx.model);
-                                                let _ = writer.send(Message::Text(
-                                                    helpers::status_frame("model_configured", &detail).into(),
-                                                )).await;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            let resp = json!({
-                                                "type": "reload_result",
-                                                "ok": false,
-                                                "message": format!("Failed to reload config: {}", e),
-                                            });
-                                            let _ = writer.send(Message::Text(resp.to_string().into())).await;
-                                        }
+                                    Err(e) => {
+                                        v.clear_password();
+                                        send_vault_unlocked(
+                                            &mut writer,
+                                            false,
+                                            Some(&format!("Failed to unlock vault: {}", e)),
+                                        ).await?;
                                     }
-                                    continue;
-                                }
-                                _ => {
-                                    // Not a control message — fall through to dispatch
                                 }
                             }
-                        }
+                            ClientPayload::SecretsList => {
+                                let mut v = vault.lock().await;
+                                let entries = v.list_all_entries();
+                                let dto_entries: Vec<SecretEntryDto> = entries
+                                    .iter()
+                                    .map(|(name, entry)| SecretEntryDto {
+                                        name: name.clone(),
+                                        label: entry.label.clone(),
+                                        kind: format!("{:?}", entry.kind),
+                                        policy: format!("{:?}", entry.policy),
+                                        disabled: entry.disabled,
+                                    })
+                                    .collect();
+                                send_secrets_list_result(&mut writer, true, dto_entries).await?;
+                            }
+                            ClientPayload::SecretsStore { key, value } => {
+                                let mut v = vault.lock().await;
+                                let result = v.store_secret(&key, &value);
+                                match result {
+                                    Ok(()) => send_secrets_store_result(
+                                        &mut writer,
+                                        true,
+                                        &format!("Secret '{}' stored.", key),
+                                    ).await?,
+                                    Err(e) => send_secrets_store_result(
+                                        &mut writer,
+                                        false,
+                                        &format!("Failed to store secret: {}", e),
+                                    ).await?,
+                                };
+                            }
+                            ClientPayload::SecretsGet { key } => {
+                                let mut v = vault.lock().await;
+                                let result = v.get_secret(&key, true);
+                                match result {
+                                    Ok(Some(value)) => {
+                                        send_secrets_get_result(&mut writer, true, &key, Some(&value), None).await?
+                                    }
+                                    Ok(None) => {
+                                        send_secrets_get_result(&mut writer, false, &key, None, Some(&format!("Secret '{}' not found.", key))).await?
+                                    }
+                                    Err(e) => {
+                                        send_secrets_get_result(&mut writer, false, &key, None, Some(&format!("Failed to get secret: {}", e))).await?
+                                    }
+                                };
+                            }
+                            ClientPayload::SecretsDelete { key } => {
+                                let mut v = vault.lock().await;
+                                let result = v.delete_secret(&key);
+                                match result {
+                                    Ok(()) => send_secrets_delete_result(&mut writer, true, None).await?,
+                                    Err(e) => send_secrets_delete_result(
+                                        &mut writer,
+                                        false,
+                                        Some(&format!("Failed to delete: {}", e)),
+                                    ).await?,
+                                };
+                            }
+                            ClientPayload::SecretsPeek { name } => {
+                                let mut v = vault.lock().await;
+                                let result = v.peek_credential_display(&name);
+                                match result {
+                                    Ok(fields) => {
+                                        let field_tuples: Vec<(String, String)> = fields
+                                            .iter()
+                                            .map(|(label, value)| (label.clone(), value.clone()))
+                                            .collect();
+                                        send_secrets_peek_result(&mut writer, true, field_tuples, None)
+                                            .await?
+                                    }
+                                    Err(e) => send_secrets_peek_result(
+                                        &mut writer,
+                                        false,
+                                        vec![],
+                                        Some(&format!("Failed to peek: {}", e)),
+                                    ).await?,
+                                };
+                            }
+                            ClientPayload::SecretsSetPolicy { name, policy, skills } => {
+                                let mut v = vault.lock().await;
+                                let policy_str = policy.clone();
+                                let policy = match policy.as_str() {
+                                    "always" => Some(crate::secrets::AccessPolicy::Always),
+                                    "ask" => Some(crate::secrets::AccessPolicy::WithApproval),
+                                    "auth" => Some(crate::secrets::AccessPolicy::WithAuth),
+                                    "skill_only" => Some(crate::secrets::AccessPolicy::SkillOnly(skills)),
+                                    _ => None,
+                                };
+                                if let Some(policy) = policy {
+                                    let result = v.set_credential_policy(&name, policy);
+                                    match result {
+                                        Ok(()) => send_secrets_set_policy_result(&mut writer, true, None).await?,
+                                        Err(e) => send_secrets_set_policy_result(
+                                            &mut writer,
+                                            false,
+                                            Some(&format!("Failed to set policy: {}", e)),
+                                        ).await?,
+                                    }
+                                } else {
+                                    send_secrets_set_policy_result(
+                                        &mut writer,
+                                        false,
+                                        Some(&format!("Unknown policy: {}", policy_str)),
+                                    ).await?;
+                                }
+                            }
+                            ClientPayload::SecretsSetDisabled { name, disabled } => {
+                                let mut v = vault.lock().await;
+                                let result = v.set_credential_disabled(&name, disabled);
+                                match result {
+                                    Ok(()) => send_secrets_set_disabled_result(&mut writer, true, None).await?,
+                                    Err(e) => send_secrets_set_disabled_result(&mut writer, false, Some(&format!("Failed: {}", e))).await?,
+                                };
+                            }
+                            ClientPayload::SecretsDeleteCredential { name } => {
+                                let mut v = vault.lock().await;
+                                let meta_key = format!("cred:{}", name);
+                                let is_legacy = v.get_secret(&meta_key, true).ok().flatten().is_none();
+                                if is_legacy {
+                                    let _ = v.delete_secret(&name);
+                                }
+                                let result = v.delete_credential(&name);
+                                match result {
+                                    Ok(()) => send_secrets_delete_credential_result(&mut writer, true, None).await?,
+                                    Err(e) => send_secrets_delete_credential_result(&mut writer, false, Some(&format!("Failed: {}", e))).await?,
+                                };
+                            }
+                            ClientPayload::SecretsHasTotp => {
+                                let mut v = vault.lock().await;
+                                let has_totp = v.has_totp();
+                                send_secrets_has_totp_result(&mut writer, has_totp).await?;
+                            }
+                            ClientPayload::SecretsSetupTotp => {
+                                let mut v = vault.lock().await;
+                                let result = v.setup_totp("rustyclaw");
+                                match result {
+                                    Ok(uri) => send_secrets_setup_totp_result(&mut writer, true, Some(&uri), None).await?,
+                                    Err(e) => send_secrets_setup_totp_result(&mut writer, false, None, Some(&format!("Failed: {}", e))).await?,
+                                };
+                            }
+                            ClientPayload::SecretsVerifyTotp { code } => {
+                                let mut v = vault.lock().await;
+                                let result = v.verify_totp(&code);
+                                match result {
+                                    Ok(valid) => send_secrets_verify_totp_result(&mut writer, valid, None).await?,
+                                    Err(e) => send_secrets_verify_totp_result(&mut writer, false, Some(&format!("Error: {}", e))).await?,
+                                };
+                            }
+                            ClientPayload::SecretsRemoveTotp => {
+                                let mut v = vault.lock().await;
+                                let result = v.remove_totp();
+                                match result {
+                                    Ok(()) => send_secrets_remove_totp_result(&mut writer, true, None).await?,
+                                    Err(e) => send_secrets_remove_totp_result(&mut writer, false, Some(&format!("Failed: {}", e))).await?,
+                                };
+                            }
+                            ClientPayload::Reload => {
+                                let settings_dir = config.settings_dir.clone();
+                                let config_path = settings_dir.join("config.toml");
+                                match Config::load(Some(config_path)) {
+                                    Ok(new_config) => {
+                                        let new_model_ctx = {
+                                            let mut v = vault.lock().await;
+                                            ModelContext::resolve(&new_config, &mut v).ok().map(Arc::new)
+                                        };
 
-                        // Re-read model_ctx from shared state for each dispatch
-                        // so reloaded config takes effect on existing connections.
-                        let current_model_ctx = shared_model_ctx.read().await.clone();
-                        let workspace_dir = config.workspace_dir();
-                        if let Err(err) = dispatch_text_message(
-                            &http,
-                            text.as_str(),
-                            current_model_ctx.as_deref(),
-                            copilot_session.as_deref(),
-                            &mut writer,
-                            &workspace_dir,
-                            &vault,
-                            &skill_mgr,
-                            &tool_cancel,
-                        )
-                        .await
-                        {
-                            let frame = json!({
-                                "type": "error",
-                                "ok": false,
-                                "message": err.to_string(),
-                            });
-                            let _ = writer
-                                .send(Message::Text(frame.to_string().into()))
-                                .await;
+                                        let (provider, model) = if let Some(ref ctx) = new_model_ctx {
+                                            (ctx.provider.clone(), ctx.model.clone())
+                                        } else {
+                                            ("(none)".to_string(), "(none)".to_string())
+                                        };
+
+                                        {
+                                            let mut cfg = shared_config.write().await;
+                                            *cfg = new_config;
+                                        }
+                                        {
+                                            let mut ctx = shared_model_ctx.write().await;
+                                            *ctx = new_model_ctx.clone();
+                                        }
+
+                                        send_reload_result(&mut writer, true, &provider, &model, None).await?;
+
+                                        if let Some(ref ctx) = new_model_ctx {
+                                            let display = crate_providers::display_name_for_provider(&ctx.provider);
+                                            let detail = format!("{} / {} (reloaded)", display, ctx.model);
+                                            protocol::server::send_status(
+                                                &mut writer,
+                                                StatusType::ModelConfigured,
+                                                &detail,
+                                            ).await?;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        protocol::server::send_error(
+                                            &mut writer,
+                                            &format!("Failed to reload config: {}", e),
+                                        ).await?;
+                                    }
+                                }
+                            }
+                            ClientPayload::Chat { messages } => {
+                                // Re-read model_ctx from shared state for each dispatch
+                                let current_model_ctx = shared_model_ctx.read().await.clone();
+                                let workspace_dir = config.workspace_dir();
+
+                                // Build a ChatRequest from the messages
+                                let chat_request = ChatRequest {
+                                    msg_type: "chat".to_string(),
+                                    messages,
+                                    model: None,
+                                    provider: None,
+                                    base_url: None,
+                                    api_key: None,
+                                };
+
+                                if let Err(err) = dispatch_text_message(
+                                    &http,
+                                    &chat_request,
+                                    current_model_ctx.as_deref(),
+                                    copilot_session.as_deref(),
+                                    &mut writer,
+                                    &workspace_dir,
+                                    &vault,
+                                    &skill_mgr,
+                                    &tool_cancel,
+                                )
+                                .await
+                                {
+                                    let error_frame = ServerFrame {
+                                        frame_type: ServerFrameType::Error,
+                                        payload: ServerPayload::Error {
+                                            ok: false,
+                                            message: err.to_string(),
+                                        },
+                                    };
+                                    send_frame(&mut writer, &error_frame).await?;
+                                }
+                            }
+                            ClientPayload::Empty | ClientPayload::AuthChallenge { .. } | ClientPayload::AuthResponse { .. } => {
+                                // These are handled in the auth phase, not here
+                            }
                         }
                     }
-                    Message::Binary(_) => {
-                        let response = json!({
-                            "type": "error",
-                            "ok": false,
-                            "message": "Binary frames are not supported",
-                        });
-                        writer
-                            .send(Message::Text(response.to_string().into()))
-                            .await
-                            .context("Failed to send error response")?;
+                    Message::Text(_) => {
+                        // Reject text frames - only binary is supported
+                        let error_frame = ServerFrame {
+                            frame_type: ServerFrameType::Error,
+                            payload: ServerPayload::Error {
+                                ok: false,
+                                message: "Text frames are not supported. Use binary protocol.".to_string(),
+                            },
+                        };
+                        send_frame(&mut writer, &error_frame).await?;
                     }
                     Message::Close(_) => {
                         break;
@@ -1099,7 +1003,7 @@ async fn handle_connection(
 /// tool loop gracefully.
 async fn dispatch_text_message(
     http: &reqwest::Client,
-    text: &str,
+    req: &ChatRequest,
     model_ctx: Option<&ModelContext>,
     copilot_session: Option<&CopilotSession>,
     writer: &mut WsWriter,
@@ -1108,43 +1012,17 @@ async fn dispatch_text_message(
     skill_mgr: &SharedSkillManager,
     tool_cancel: &ToolCancelFlag,
 ) -> Result<()> {
-    // Try to parse as a structured JSON request.
-    let req = match serde_json::from_str::<ChatRequest>(text) {
-        Ok(r) if r.msg_type == "chat" => r,
-        Ok(r) => {
-            let frame = json!({
-                "type": "error",
-                "ok": false,
-                "message": format!("Unknown message type: {:?}", r.msg_type),
-            });
-            writer
-                .send(Message::Text(frame.to_string().into()))
-                .await
-                .context("Failed to send error frame")?;
-            return Ok(());
-        }
-        Err(err) => {
-            let frame = json!({
-                "type": "error",
-                "ok": false,
-                "message": format!("Invalid JSON: {}", err),
-            });
-            writer
-                .send(Message::Text(frame.to_string().into()))
-                .await
-                .context("Failed to send error frame")?;
-            return Ok(());
-        }
-    };
-
-    let mut resolved = match providers::resolve_request(req, model_ctx) {
+    let mut resolved = match providers::resolve_request(req.clone(), model_ctx) {
         Ok(r) => r,
         Err(msg) => {
-            let frame = json!({ "type": "error", "ok": false, "message": msg });
-            writer
-                .send(Message::Text(frame.to_string().into()))
-                .await
-                .context("Failed to send error frame")?;
+            let error_frame = ServerFrame {
+                frame_type: ServerFrameType::Error,
+                payload: ServerPayload::Error {
+                    ok: false,
+                    message: msg,
+                },
+            };
+            send_frame(writer, &error_frame).await.context("Failed to send error frame")?;
             return Ok(());
         }
     };
@@ -1181,14 +1059,7 @@ async fn dispatch_text_message(
     for _round in 0..MAX_TOOL_ROUNDS {
         // ── Check for cancellation ──────────────────────────────────
         if tool_cancel.load(Ordering::Relaxed) {
-            let frame = json!({
-                "type": "info",
-                "message": "Tool loop cancelled by user.",
-            });
-            writer
-                .send(Message::Text(frame.to_string().into()))
-                .await
-                .context("Failed to send cancel info")?;
+            protocol::server::send_info(writer, "Tool loop cancelled by user.").await?;
             providers::send_response_done(writer).await?;
             return Ok(());
         }
@@ -1205,15 +1076,7 @@ async fn dispatch_text_message(
         {
             Ok(token) => resolved.api_key = token,
             Err(err) => {
-                let frame = json!({
-                    "type": "error",
-                    "ok": false,
-                    "message": format!("Token refresh failed: {}", err),
-                });
-                writer
-                    .send(Message::Text(frame.to_string().into()))
-                    .await
-                    .context("Failed to send error frame")?;
+                protocol::server::send_error(writer, &format!("Token refresh failed: {}", err)).await?;
                 return Ok(());
             }
         }
@@ -1234,13 +1097,7 @@ async fn dispatch_text_message(
                 Err(err) => {
                     // Non-fatal — log a warning and keep going with the
                     // full context; the provider may still accept it.
-                    let warn_frame = json!({
-                        "type": "info",
-                        "message": format!("Context compaction failed: {}", err),
-                    });
-                    let _ = writer
-                        .send(Message::Text(warn_frame.to_string().into()))
-                        .await;
+                    let _ = protocol::server::send_info(writer, &format!("Context compaction failed: {}", err)).await;
                 }
             }
         }
@@ -1257,15 +1114,7 @@ async fn dispatch_text_message(
         let model_resp = match result {
             Ok(r) => r,
             Err(err) => {
-                let frame = json!({
-                    "type": "error",
-                    "ok": false,
-                    "message": err.to_string(),
-                });
-                writer
-                    .send(Message::Text(frame.to_string().into()))
-                    .await
-                    .context("Failed to send error frame")?;
+                protocol::server::send_error(writer, &err.to_string()).await?;
                 return Ok(());
             }
         };
@@ -1347,27 +1196,13 @@ async fn dispatch_text_message(
                 return Ok(());
             } else if finish_reason == "length" {
                 // Hit token limit — warn and stop
-                let frame = json!({
-                    "type": "info",
-                    "message": "Response truncated due to token limit.",
-                });
-                writer
-                    .send(Message::Text(frame.to_string().into()))
-                    .await
-                    .context("Failed to send length warning")?;
+                protocol::server::send_info(writer, "Response truncated due to token limit.").await?;
                 providers::send_response_done(writer).await?;
                 return Ok(());
             } else {
                 // Unexpected finish_reason with no tool calls
                 // Log it and treat as done (better than looping forever)
-                let frame = json!({
-                    "type": "info",
-                    "message": format!("Model finished with reason '{}' but no tool calls.", finish_reason),
-                });
-                writer
-                    .send(Message::Text(frame.to_string().into()))
-                    .await
-                    .context("Failed to send finish info")?;
+                protocol::server::send_info(writer, &format!("Model finished with reason '{}' but no tool calls.", finish_reason)).await?;
                 providers::send_response_done(writer).await?;
                 return Ok(());
             }
@@ -1381,16 +1216,12 @@ async fn dispatch_text_message(
 
         for tc in &model_resp.tool_calls {
             // Notify the client about the tool call.
-            let call_frame = json!({
-                "type": "tool_call",
-                "id": tc.id,
-                "name": tc.name,
-                "arguments": tc.arguments,
-            });
-            writer
-                .send(Message::Text(call_frame.to_string().into()))
-                .await
-                .context("Failed to send tool_call frame")?;
+            protocol::server::send_tool_call(
+                writer,
+                &tc.id,
+                &tc.name,
+                tc.arguments.clone(),
+            ).await?;
 
             // Execute the tool.
             let (output, is_error) = if tools::is_secrets_tool(&tc.name) {
@@ -1416,17 +1247,13 @@ async fn dispatch_text_message(
             let output = tools::sanitize_tool_output(output);
 
             // Notify the client about the result.
-            let result_frame = json!({
-                "type": "tool_result",
-                "id": tc.id,
-                "name": tc.name,
-                "result": output,
-                "is_error": is_error,
-            });
-            writer
-                .send(Message::Text(result_frame.to_string().into()))
-                .await
-                .context("Failed to send tool_result frame")?;
+            protocol::server::send_tool_result(
+                writer,
+                &tc.id,
+                &tc.name,
+                &output,
+                is_error,
+            ).await?;
 
             tool_results.push(ToolCallResult {
                 id: tc.id.clone(),
@@ -1448,15 +1275,10 @@ async fn dispatch_text_message(
     }
 
     // If we exhausted all rounds, send what we have and stop.
-    let frame = json!({
-        "type": "error",
-        "ok": false,
-        "message": format!("Safety limit reached ({} tool rounds) — stopping to prevent infinite loop.", MAX_TOOL_ROUNDS),
-    });
-    writer
-        .send(Message::Text(frame.to_string().into()))
-        .await
-        .context("Failed to send error frame")?;
+    protocol::server::send_error(
+        writer,
+        &format!("Safety limit reached ({} tool rounds) — stopping to prevent infinite loop.", MAX_TOOL_ROUNDS),
+    ).await?;
     providers::send_response_done(writer).await?;
     Ok(())
 }

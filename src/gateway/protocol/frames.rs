@@ -145,12 +145,20 @@ pub struct ClientFrame {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientPayload {
     Empty,
+    AuthChallenge {
+        method: String,
+    },
     AuthResponse {
         code: String,
     },
     UnlockVault {
         password: String,
     },
+    Reload,
+    Chat {
+        messages: Vec<super::types::ChatMessage>,
+    },
+    SecretsList,
     SecretsGet {
         key: String,
     },
@@ -176,9 +184,12 @@ pub enum ClientPayload {
     SecretsDeleteCredential {
         name: String,
     },
+    SecretsHasTotp,
+    SecretsSetupTotp,
     SecretsVerifyTotp {
         code: String,
     },
+    SecretsRemoveTotp,
 }
 
 /// Generic server frame envelope.

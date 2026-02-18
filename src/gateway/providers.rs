@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use futures_util::SinkExt;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -425,20 +424,16 @@ pub async fn compact_conversation(
     resolved.messages = new_messages;
 
     // Notify the client.
-    let info_frame = json!({
-        "type": "info",
-        "message": format!(
+    server::send_info(
+        writer,
+        &format!(
             "Context compacted: {} → {} messages (~{}k → ~{}k tokens)",
             old_count,
             new_count,
             old_tokens / 1000,
             new_tokens / 1000,
         ),
-    });
-    writer
-        .send(Message::Text(info_frame.to_string().into()))
-        .await
-        .context("Failed to send compaction info frame")?;
+    ).await.context("Failed to send compaction info frame")?;
 
     Ok(())
 }
@@ -1065,8 +1060,7 @@ pub async fn call_anthropic_with_tools(
     // Send immediate "waiting" indicator BEFORE the HTTP request
     // This is where the model processing time is spent
     if let Some(ref mut w) = writer {
-        let waiting_frame = json!({ "type": "stream_start" });
-        let _ = w.send(Message::Text(waiting_frame.to_string().into())).await;
+        server::send_stream_start(w).await?;
     }
 
     let api_key = req.api_key.as_deref().unwrap_or("");

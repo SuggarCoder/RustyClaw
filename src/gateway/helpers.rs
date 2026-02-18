@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use serde_json::json;
 use std::net::SocketAddr;
 use url::Url;
 
@@ -87,19 +86,4 @@ pub fn resolve_listen_addr(listen: &str) -> Result<SocketAddr> {
     trimmed
         .parse()
         .with_context(|| format!("Invalid listen address {}", trimmed))
-}
-
-// ── Status reporting ─────────────────────────────────────────────────────────
-
-/// Build a JSON status frame to push to connected clients.
-///
-/// Status frames use `{ "type": "status", "status": "…", "detail": "…" }`.
-/// The TUI uses these to update the gateway badge and display progress.
-pub fn status_frame(status: &str, detail: &str) -> String {
-    json!({
-        "type": "status",
-        "status": status,
-        "detail": detail,
-    })
-    .to_string()
 }

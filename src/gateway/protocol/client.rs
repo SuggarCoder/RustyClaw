@@ -3,10 +3,7 @@
 //! This module provides helpers for the TUI client to convert server frames
 //! into application actions.
 
-use super::frames::{
-    ClientFrame, ClientFrameType, ClientPayload, ServerFrame,
-    ServerPayload, StatusType,
-};
+use super::frames::{SecretEntryDto, ServerFrame, ServerFrameType, ServerPayload, StatusType};
 use crate::action::Action;
 
 /// Result of processing a server frame - includes optional action and whether to update UI.
@@ -133,12 +130,12 @@ pub fn server_frame_to_action(frame: &ServerFrame) -> FrameAction {
                 message: message.clone(),
             })
         }
-        ServerPayload::SecretsGetResult { ok: _, key, value, .. } => {
-            FrameAction::just_action(Action::SecretsGetResult {
-                key: key.clone(),
-                value: value.clone(),
-            })
-        }
+        ServerPayload::SecretsGetResult {
+            ok: _, key, value, ..
+        } => FrameAction::just_action(Action::SecretsGetResult {
+            key: key.clone(),
+            value: value.clone(),
+        }),
         ServerPayload::SecretsPeekResult {
             ok,
             fields,
@@ -227,35 +224,6 @@ pub fn server_frame_to_action(frame: &ServerFrame) -> FrameAction {
         }
         ServerPayload::Info { message } => FrameAction::just_action(Action::Info(message.clone())),
         ServerPayload::Empty => FrameAction::none(),
-    }
-}
-
-/// Build a client frame for storing a secret.
-pub fn build_secrets_store_frame(key: &str, value: &str) -> ClientFrame {
-    ClientFrame {
-        frame_type: ClientFrameType::SecretsStore,
-        payload: ClientPayload::SecretsStore {
-            key: key.into(),
-            value: value.into(),
-        },
-    }
-}
-
-/// Build a client frame for unlocking the vault.
-pub fn build_unlock_vault_frame(password: &str) -> ClientFrame {
-    ClientFrame {
-        frame_type: ClientFrameType::UnlockVault,
-        payload: ClientPayload::UnlockVault {
-            password: password.into(),
-        },
-    }
-}
-
-/// Build a client frame for sending an auth response (TOTP code).
-pub fn build_auth_response_frame(code: &str) -> ClientFrame {
-    ClientFrame {
-        frame_type: ClientFrameType::AuthResponse,
-        payload: ClientPayload::AuthResponse { code: code.into() },
     }
 }
 

@@ -4,9 +4,9 @@ use crate::config::Config;
 use crate::daemon;
 use crate::dialogs::{FetchModelsLoading, SecretViewerState, SPINNER_FRAMES};
 use crate::gateway::{
-    ClientFrame, deserialize_frame, serialize_frame, ServerFrame, ServerFrameType,
+    ClientFrame, ClientFrameType, ClientPayload, ChatMessage, deserialize_frame, serialize_frame,
+    ServerFrame, ServerFrameType,
 };
-use crate::gateway::ChatMessage;
 use crate::pages::Page;
 use crate::panes::DisplayMessage;
 use crate::providers;
@@ -128,51 +128,25 @@ impl App {
         while let Some(result) = stream.next().await {
             match result {
                 Ok(Message::Text(text)) => {
+                    // Handle text frames as JSON
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
+                        let frame_type = val.get("type").and_then(|t| t.as_str());
+                        if frame_type == Some("auth_challenge") {
+                            let _ = tx.send(Action::GatewayAuthChallenge);
+                            continue;
+                        }
+                        // Fall through to generic message handling for other text frames
+                    }
                     let _ = tx.send(Action::GatewayMessage(text.to_string()));
                 }
                 Ok(Message::Binary(data)) => {
-                    // Deserialize binary ServerFrame
+                    // Deserialize binary ServerFrame and dispatch directly
                     match deserialize_frame::<ServerFrame>(&data) {
                         Ok(frame) => {
-                            // Convert ServerFrame to JSON for legacy handler
-                            // TODO: handle ServerFrame directly without JSON conversion
-                            let json = match &frame.payload {
-                                crate::gateway::ServerPayload::Chunk { delta } => {
-                                    serde_json::json!({ "type": "chunk", "delta": delta })
-                                }
-                                crate::gateway::ServerPayload::StreamStart => {
-                                    serde_json::json!({ "type": "stream_start" })
-                                }
-                                crate::gateway::ServerPayload::ResponseDone { ok } => {
-                                    serde_json::json!({ "type": "response_done", "ok": ok })
-                                }
-                                crate::gateway::ServerPayload::ThinkingStart => {
-                                    serde_json::json!({ "type": "thinking_start" })
-                                }
-                                crate::gateway::ServerPayload::ThinkingDelta { delta } => {
-                                    serde_json::json!({ "type": "thinking_delta", "delta": delta })
-                                }
-                                crate::gateway::ServerPayload::ThinkingEnd => {
-                                    serde_json::json!({ "type": "thinking_end" })
-                                }
-                                crate::gateway::ServerPayload::ToolCall { id, name, arguments } => {
-                                    serde_json::json!({ "type": "tool_call", "id": id, "name": name, "arguments": arguments })
-                                }
-                                crate::gateway::ServerPayload::ToolResult { id, name, result, is_error } => {
-                                    serde_json::json!({ "type": "tool_result", "id": id, "name": name, "result": result, "is_error": is_error })
-                                }
-                                crate::gateway::ServerPayload::Error { ok, message } => {
-                                    serde_json::json!({ "type": "error", "ok": ok, "message": message })
-                                }
-                                crate::gateway::ServerPayload::Info { message } => {
-                                    serde_json::json!({ "type": "info", "message": message })
-                                }
-                                _ => {
-                                    // For other frame types, skip or log
-                                    continue;
-                                }
-                            };
-                            let _ = tx.send(Action::GatewayMessage(json.to_string()));
+                            let frame_action = crate::gateway::server_frame_to_action(&frame);
+                            if let Some(action) = frame_action.action {
+                                let _ = tx.send(action);
+                            }
                         }
                         Err(_) => {
                             // Silently ignore malformed binary frames
@@ -196,27 +170,80 @@ impl App {
     }
 
     pub async fn send_to_gateway(&mut self, text: String) {
-        if let Some(ref mut sink) = self.ws_sink {
-            // Send as text frame (JSON)
-            match sink.send(Message::Text(text.into())).await {
-                Ok(()) => {}
-                Err(err) => {
-                    self.chat_loading_tick = None;
-                    self.state.loading_line = None;
-                    self.streaming_response = None;
-                    self.state.streaming_started = None;
-                    self.state
-                        .messages
-                        .push(DisplayMessage::error(format!("Send failed: {}", err)));
-                    self.state.gateway_status = crate::panes::GatewayStatus::Error;
-                    self.ws_sink = None;
+        // Always send as bincode-serialized binary frame
+        use crate::gateway::protocol::types::ChatMessage;
+        let frame = if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+            let msg_type = val.get("type").and_then(|t| t.as_str());
+            match msg_type {
+                Some("unlock_vault") => {
+                    let password = val.get("password").and_then(|p| p.as_str()).unwrap_or("");
+                    ClientFrame {
+                        frame_type: ClientFrameType::UnlockVault,
+                        payload: ClientPayload::UnlockVault { password: password.into() },
+                    }
+                }
+                Some("reload") => {
+                    ClientFrame {
+                        frame_type: ClientFrameType::Reload,
+                        payload: ClientPayload::Reload,
+                    }
+                }
+                Some("secrets_list") => {
+                    ClientFrame {
+                        frame_type: ClientFrameType::SecretsList,
+                        payload: ClientPayload::SecretsList,
+                    }
+                }
+                Some("secrets_store") => {
+                    let key = val.get("key").and_then(|k| k.as_str()).unwrap_or("");
+                    let value = val.get("value").and_then(|v| v.as_str()).unwrap_or("");
+                    ClientFrame {
+                        frame_type: ClientFrameType::SecretsStore,
+                        payload: ClientPayload::SecretsStore { key: key.into(), value: value.into() },
+                    }
+                }
+                Some("secrets_get") => {
+                    let key = val.get("key").and_then(|k| k.as_str()).unwrap_or("");
+                    ClientFrame {
+                        frame_type: ClientFrameType::SecretsGet,
+                        payload: ClientPayload::SecretsGet { key: key.into() },
+                    }
+                }
+                Some("secrets_delete") => {
+                    let key = val.get("key").and_then(|k| k.as_str()).unwrap_or("");
+                    ClientFrame {
+                        frame_type: ClientFrameType::SecretsDelete,
+                        payload: ClientPayload::SecretsDelete { key: key.into() },
+                    }
+                }
+                Some("secrets_setup_totp") => {
+                    ClientFrame {
+                        frame_type: ClientFrameType::SecretsSetupTotp,
+                        payload: ClientPayload::SecretsSetupTotp,
+                    }
+                }
+                Some("cancel") => {
+                    ClientFrame {
+                        frame_type: ClientFrameType::Cancel,
+                        payload: ClientPayload::Empty,
+                    }
+                }
+                // Fallback: treat as chat if unknown type
+                _ => {
+                    ClientFrame {
+                        frame_type: ClientFrameType::Chat,
+                        payload: ClientPayload::Chat { messages: vec![ChatMessage::text("user", &text)] },
+                    }
                 }
             }
         } else {
-            self.state
-                .messages
-                .push(DisplayMessage::warning("Cannot send: gateway not connected."));
-        }
+            // Not JSON: treat as chat
+            ClientFrame {
+                frame_type: ClientFrameType::Chat,
+                payload: ClientPayload::Chat { messages: vec![ChatMessage::text("user", &text)] },
+            }
+        };
+        self.send_frame(frame).await;
     }
 
     /// Send a typed frame to the gateway using bincode serialization.
@@ -443,8 +470,75 @@ impl App {
     }
 
     pub async fn request_secrets_list(&mut self) {
-        let frame = serde_json::json!({"type": "secrets_list"});
-        self.send_to_gateway(frame.to_string()).await;
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::SecretsList,
+            payload: ClientPayload::SecretsList,
+        };
+        self.send_frame(frame).await;
+    }
+
+    pub async fn send_chat(&mut self, messages: Vec<ChatMessage>) {
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::Chat,
+            payload: ClientPayload::Chat { messages },
+        };
+        self.send_frame(frame).await;
+    }
+
+    pub async fn send_unlock_vault(&mut self, password: String) {
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::UnlockVault,
+            payload: ClientPayload::UnlockVault { password },
+        };
+        self.send_frame(frame).await;
+    }
+
+    pub async fn send_reload(&mut self) {
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::Reload,
+            payload: ClientPayload::Reload,
+        };
+        self.send_frame(frame).await;
+    }
+
+    pub async fn send_secrets_get(&mut self, key: String) {
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::SecretsGet,
+            payload: ClientPayload::SecretsGet { key },
+        };
+        self.send_frame(frame).await;
+    }
+
+    pub async fn send_secrets_store(&mut self, key: String, value: String) {
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::SecretsStore,
+            payload: ClientPayload::SecretsStore { key, value },
+        };
+        self.send_frame(frame).await;
+    }
+
+    pub async fn send_secrets_delete(&mut self, key: String) {
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::SecretsDelete,
+            payload: ClientPayload::SecretsDelete { key },
+        };
+        self.send_frame(frame).await;
+    }
+
+    pub async fn send_secrets_setup_totp(&mut self) {
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::SecretsSetupTotp,
+            payload: ClientPayload::SecretsSetupTotp,
+        };
+        self.send_frame(frame).await;
+    }
+
+    pub async fn send_cancel(&mut self) {
+        let frame = ClientFrame {
+            frame_type: ClientFrameType::Cancel,
+            payload: ClientPayload::Empty,
+        };
+        self.send_frame(frame).await;
     }
 
     pub fn handle_set_provider(&mut self, provider: String) -> Result<Option<Action>> {
@@ -586,7 +680,7 @@ impl App {
         Ok(Some(Action::Update))
     }
 
-    async fn handle_action(&mut self, action: Action) -> Result<Option<Action>> {
+    pub async fn handle_action(&mut self, action: Action) -> Result<Option<Action>> {
         match action {
             Action::Info(msg) => {
                 self.state.messages.push(DisplayMessage::info(&msg));
@@ -856,6 +950,10 @@ impl App {
             }
 
             return Ok(Some(Action::Update));
+        }
+
+        if frame_type == Some("auth_challenge") {
+            return Ok(Some(Action::GatewayAuthChallenge));
         }
 
         let payload = parsed.and_then(|v| {

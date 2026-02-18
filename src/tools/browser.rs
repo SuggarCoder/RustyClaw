@@ -108,7 +108,7 @@ mod real {
     pub async fn list_tabs() -> Result<String, String> {
         let state = browser_state().lock().await;
         if let Some(ref s) = *state {
-            let tabs: Vec<Value> = s.pages.iter().map(|(id, _page)| {
+            let tabs: Vec<Value> = s.pages.keys().map(|id| {
                 json!({
                     "id": id,
                     // Note: chromiumoxide doesn't expose URL easily without async call

@@ -1169,9 +1169,9 @@ mod tests {
     #[test]
     fn test_path_validation_denied() {
         let policy = SandboxPolicy::protect_credentials("/tmp/creds", "/tmp/workspace");
-
         std::fs::create_dir_all("/tmp/creds").ok();
-
+        // Ensure the file exists so canonicalize works
+        let _ = std::fs::write("/tmp/creds/secrets.json", "test");
         let result = validate_path(Path::new("/tmp/creds/secrets.json"), &policy);
         assert!(result.is_err());
     }
@@ -1271,7 +1271,8 @@ mod tests {
     fn test_path_validation_blocks_credentials() {
         let policy = SandboxPolicy::protect_credentials("/tmp/test_creds", "/tmp/test_workspace");
         std::fs::create_dir_all("/tmp/test_creds").ok();
-
+        // Ensure the file exists so canonicalize works
+        let _ = std::fs::write("/tmp/test_creds/secret.txt", "test");
         // This should fail because /tmp/test_creds is protected
         let result = run_with_path_validation("cat /tmp/test_creds/secret.txt", &policy);
         assert!(result.is_err());

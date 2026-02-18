@@ -231,8 +231,7 @@ impl App {
                         } else if self.streaming_response.is_some() {
                             if let Event::Key(key) = &event {
                                 if key.code == crossterm::event::KeyCode::Esc {
-                                    let cancel_msg = serde_json::json!({ "type": "cancel" });
-                                    self.send_to_gateway(cancel_msg.to_string()).await;
+                                    self.send_cancel().await;
                                     self.state.messages.push(DisplayMessage::info(
                                         "Cancelling tool loop…",
                                     ));
@@ -494,11 +493,7 @@ impl App {
                     "type": "unlock_vault",
                     "password": password,
                 });
-                self.send_to_gateway(frame.to_string()).await;
-                self.state
-                    .messages
-                    .push(DisplayMessage::info("Sent vault unlock request…"));
-                return Ok(Some(Action::Update));
+                return Ok(Some(Action::SendToGateway(frame.to_string())));
             }
             Action::GatewayDisconnected(reason) => {
                 self.state.gateway_status = GatewayStatus::Disconnected;
@@ -576,11 +571,7 @@ impl App {
                     "key": secret_key,
                     "value": key,
                 });
-                self.send_to_gateway(frame.to_string()).await;
-                self.state.messages.push(DisplayMessage::info(format!(
-                    "Storing API key for {}…", display,
-                )));
-                return Ok(Some(Action::FetchModels(provider.clone())));
+                return Ok(Some(Action::SendToGateway(frame.to_string())));
             }
             Action::FetchModels(provider) => {
                 dialogs::spawn_fetch_models(
@@ -633,12 +624,11 @@ impl App {
                     "key": secret_key,
                     "value": token,
                 });
-                self.send_to_gateway(frame.to_string()).await;
                 self.state.messages.push(DisplayMessage::success(format!(
                     "{} authenticated successfully. Storing token…",
                     display,
                 )));
-                return Ok(Some(Action::FetchModels(provider.clone())));
+                return Ok(Some(Action::SendToGateway(frame.to_string())));
             }
             Action::DeviceFlowFailed(msg) => {
                 self.device_flow_loading = None;
@@ -668,8 +658,7 @@ impl App {
                         phase: TotpDialogPhase::AlreadyConfigured,
                     });
                 } else {
-                    let frame = serde_json::json!({"type": "secrets_setup_totp"});
-                    self.send_to_gateway(frame.to_string()).await;
+                    self.send_secrets_setup_totp().await;
                 }
                 return Ok(None);
             }
@@ -681,8 +670,7 @@ impl App {
             Action::BeginHatchingExchange => {
                 let messages = self.hatching_page.as_ref().map(|h| h.chat_messages());
                 if let Some(msgs) = messages {
-                    let chat_json = self.build_hatching_chat_request(msgs);
-                    self.send_to_gateway(chat_json).await;
+                    self.send_chat(msgs).await;
                 }
                 return Ok(Some(Action::Update));
             }
@@ -696,6 +684,40 @@ impl App {
                 self.showing_hatching = false;
                 self.hatching_page = None;
                 return Ok(Some(Action::Update));
+            }
+            // ── Forward binary-protocol frame actions to handle_action ──
+            //
+            // When the client receives binary WebSocket frames, the reader
+            // loop decodes them into specific Action variants (GatewayChunk,
+            // GatewayResponseDone, etc.) and sends them here directly.
+            // Route them to handle_action() in the gateway handler, which
+            // contains the actual processing logic for these frame types.
+            Action::GatewayChunk(_)
+            | Action::GatewayResponseDone
+            | Action::GatewayStreamStart
+            | Action::GatewayThinkingStart
+            | Action::GatewayThinkingDelta
+            | Action::GatewayThinkingEnd
+            | Action::GatewayToolCall { .. }
+            | Action::GatewayToolResult { .. }
+            | Action::GatewayAuthenticated
+            | Action::GatewayVaultUnlocked
+            | Action::Info(_)
+            | Action::Success(_)
+            | Action::Warning(_)
+            | Action::Error(_)
+            | Action::SecretsListResult { .. }
+            | Action::SecretsGetResult { .. }
+            | Action::SecretsStoreResult { .. }
+            | Action::SecretsPeekResult { .. }
+            | Action::SecretsSetPolicyResult { .. }
+            | Action::SecretsSetDisabledResult { .. }
+            | Action::SecretsDeleteCredentialResult { .. }
+            | Action::SecretsHasTotpResult { .. }
+            | Action::SecretsSetupTotpResult { .. }
+            | Action::SecretsVerifyTotpResult { .. }
+            | Action::SecretsRemoveTotpResult { .. } => {
+                return self.handle_action(action).await;
             }
             _ => {}
         }
@@ -784,8 +806,8 @@ impl App {
                     for msg in response.messages {
                         self.state.messages.push(DisplayMessage::info(msg));
                     }
-                    let reload_json = serde_json::json!({ "type": "reload" }).to_string();
-                    return Ok(Some(Action::SendToGateway(reload_json)));
+                    let frame = serde_json::json!({ "type": "reload" });
+                    return Ok(Some(Action::SendToGateway(frame.to_string())));
                 }
                 CommandAction::SetProvider(ref provider) => {
                     for msg in &response.messages {
@@ -1024,12 +1046,8 @@ impl App {
     fn build_hatching_chat_request(
         &mut self,
         messages: Vec<crate::gateway::ChatMessage>,
-    ) -> String {
-        serde_json::json!({
-            "type": "chat",
-            "messages": messages,
-        })
-        .to_string()
+    ) -> Vec<crate::gateway::ChatMessage> {
+        messages
     }
 
     pub fn draw(&mut self, tui: &mut Tui) -> Result<()> {

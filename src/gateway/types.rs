@@ -18,7 +18,7 @@ pub struct GatewayOptions {
 ///
 /// All fields except `messages` and `type` are optional — the gateway fills
 /// missing values from its own [`ModelContext`] (resolved at startup).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ChatRequest {
     /// Must be `"chat"`.
     #[serde(rename = "type")]

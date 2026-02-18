@@ -21,6 +21,6 @@ pub mod types;
 
 pub use client::{server_frame_to_action, FrameAction};
 pub use frames::{
-    ClientFrame, ClientFrameType, ClientPayload, ServerFrame, ServerFrameType,
+    ClientFrame, ClientFrameType, ClientPayload, SecretEntryDto, ServerFrame, ServerFrameType,
     ServerPayload, StatusType, deserialize_frame, serialize_frame,
 };

@@ -138,7 +138,8 @@ async fn test_gateway_chat_message() {
         "type": "chat",
         "content": "Hello, test!"
     });
-    ws.send(Message::Text(msg.to_string())).await.expect("Should send");
+    use tokio_tungstenite::tungstenite::{Utf8Bytes, Bytes};
+    ws.send(Message::Text(Utf8Bytes::from(msg.to_string()))).await.expect("Should send");
     
     // Wait for any response
     let response = timeout(Duration::from_secs(10), ws.next()).await;
@@ -159,7 +160,8 @@ async fn test_gateway_ping_pong() {
         .expect("Should connect");
     
     // Send ping
-    ws.send(Message::Ping(vec![1, 2, 3])).await.expect("Should send ping");
+    use tokio_tungstenite::tungstenite::Bytes;
+    ws.send(Message::Ping(Bytes::from(vec![1, 2, 3]))).await.expect("Should send ping");
     
     // Wait for pong
     let response = timeout(Duration::from_secs(5), ws.next()).await;

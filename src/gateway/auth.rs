@@ -1,5 +1,6 @@
 use anyhow::Result;
 use futures_util::StreamExt;
+use serde_json;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -117,8 +118,10 @@ pub async fn resolve_bearer_token(
 
 /// Wait for an `auth_response` frame from the client.
 ///
-/// Reads WebSocket messages until we get a binary frame with
-/// `ClientFrameType::AuthResponse` or the connection drops.
+/// Reads WebSocket messages until we get either:
+/// - A binary frame with `ClientFrameType::AuthResponse`
+/// - A text frame with `{ "type": "auth_response", "code": "..." }`
+/// Or the connection drops.
 pub async fn wait_for_auth_response(
     reader: &mut futures_util::stream::SplitStream<WebSocketStream<tokio::net::TcpStream>>,
 ) -> Result<String> {
@@ -141,8 +144,15 @@ pub async fn wait_for_auth_response(
                     }
                 }
             }
-            Ok(Message::Text(_)) => {
-                // Ignore text frames during auth
+            Ok(Message::Text(text)) => {
+                // Also accept JSON text frames for CLI clients
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(text.as_ref()) {
+                    if val.get("type").and_then(|t| t.as_str()) == Some("auth_response") {
+                        if let Some(code) = val.get("code").and_then(|c| c.as_str()) {
+                            return Ok(code.to_string());
+                        }
+                    }
+                }
             }
             Ok(Message::Close(_)) => {
                 anyhow::bail!("Client disconnected during authentication");
