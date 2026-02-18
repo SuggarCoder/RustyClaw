@@ -33,6 +33,8 @@ pub struct FooterPane {
     completion_index: Option<usize>,
     /// Whether the completion popup is visible
     show_completions: bool,
+    /// Scroll offset into the completions list (top visible index)
+    completion_scroll: usize,
     /// Tick counter for spinner animation
     spinner_tick: usize,
 }
@@ -59,8 +61,9 @@ impl FooterPane {
             self.completions.clear();
             self.show_completions = false;
         }
-        // Reset selection whenever the list changes
+        // Reset selection and scroll whenever the list changes
         self.completion_index = None;
+        self.completion_scroll = 0;
     }
 
     /// Apply the currently selected completion into the input.
@@ -75,10 +78,15 @@ impl FooterPane {
         }
     }
 
-    /// Height of the completion popup (capped at 10 rows).
+    /// Maximum visible rows in the completion popup.
+    /// We use a generous cap so all commands are usually visible;
+    /// when the terminal is short the caller will clamp to available space.
+    const MAX_POPUP_ROWS: usize = 30;
+
+    /// Height of the completion popup (capped by terminal space at render time).
     pub fn completion_popup_height(&self) -> u16 {
         if self.show_completions {
-            (self.completions.len() as u16).min(10)
+            (self.completions.len() as u16).min(Self::MAX_POPUP_ROWS as u16)
         } else {
             0
         }
@@ -162,10 +170,19 @@ impl Pane for FooterPane {
                     }
                     KeyCode::Up => {
                         if self.show_completions && !self.completions.is_empty() {
-                            self.completion_index = Some(match self.completion_index {
+                            let new_idx = match self.completion_index {
                                 Some(0) | None => self.completions.len() - 1,
                                 Some(i) => i - 1,
-                            });
+                            };
+                            self.completion_index = Some(new_idx);
+                            // Scroll viewport to keep selection visible
+                            if new_idx < self.completion_scroll {
+                                self.completion_scroll = new_idx;
+                            }
+                            let max_visible = Self::MAX_POPUP_ROWS.min(self.completions.len());
+                            if new_idx >= self.completion_scroll + max_visible {
+                                self.completion_scroll = new_idx.saturating_sub(max_visible - 1);
+                            }
                             return Ok(Some(EventResponse::Stop(Action::Noop)));
                         }
                         // History navigation
@@ -183,10 +200,19 @@ impl Pane for FooterPane {
                     }
                     KeyCode::Down => {
                         if self.show_completions && !self.completions.is_empty() {
-                            self.completion_index = Some(match self.completion_index {
+                            let new_idx = match self.completion_index {
                                 None => 0,
                                 Some(i) => (i + 1) % self.completions.len(),
-                            });
+                            };
+                            self.completion_index = Some(new_idx);
+                            // Scroll viewport to keep selection visible
+                            let max_visible = Self::MAX_POPUP_ROWS.min(self.completions.len());
+                            if new_idx >= self.completion_scroll + max_visible {
+                                self.completion_scroll = new_idx.saturating_sub(max_visible - 1);
+                            }
+                            if new_idx < self.completion_scroll {
+                                self.completion_scroll = new_idx;
+                            }
                             return Ok(Some(EventResponse::Stop(Action::Noop)));
                         }
                         // History navigation
@@ -315,9 +341,29 @@ impl Pane for FooterPane {
 
         // Completion popup — rendered on top of the body area, just above the footer
         if self.show_completions && !self.completions.is_empty() {
-            let popup_h = self.completion_popup_height();
+            // Determine width from the longest entry (min 30, capped by terminal)
+            let max_entry_w = self.completions.iter()
+                .map(|c| c.len() + 4) // " /cmd "
+                .max()
+                .unwrap_or(30);
+            let popup_w = (max_entry_w as u16).clamp(30, area.width.saturating_sub(4));
+
+            // Determine height, clamped to available space above the footer
+            let max_popup_h = area.y; // rows above footer
+            let popup_h = self.completion_popup_height().min(max_popup_h);
+            let visible = popup_h as usize;
+
+            // Ensure scroll offset keeps the selection in view
+            if let Some(sel) = self.completion_index {
+                if sel < self.completion_scroll {
+                    self.completion_scroll = sel;
+                }
+                if sel >= self.completion_scroll + visible {
+                    self.completion_scroll = sel.saturating_sub(visible - 1);
+                }
+            }
+
             let popup_y = area.y.saturating_sub(popup_h);
-            let popup_w = 44.min(area.width);
             let popup_area = Rect {
                 x: area.x + 2, // align with input text start
                 y: popup_y,
@@ -335,13 +381,18 @@ impl Pane for FooterPane {
                 .completions
                 .iter()
                 .enumerate()
+                .skip(self.completion_scroll)
+                .take(visible)
                 .map(|(i, cmd)| {
                     let style = if Some(i) == self.completion_index {
                         tp::popup_selected()
                     } else {
                         tp::popup_item()
                     };
-                    Line::from(Span::styled(format!(" /{} ", cmd), style))
+                    // Pad to full popup width so highlight covers the row
+                    let text = format!(" /{} ", cmd);
+                    let padded = format!("{:<width$}", text, width = popup_w as usize);
+                    Line::from(Span::styled(padded, style))
                 })
                 .collect();
 
@@ -354,6 +405,26 @@ impl Pane for FooterPane {
                     .style(tp::popup_bg()),
                 popup_area,
             );
+
+            // Scroll indicator if list is longer than visible area
+            if self.completions.len() > visible {
+                let indicator = format!(
+                    " {}/{} ",
+                    self.completion_index.map(|i| i + 1).unwrap_or(0),
+                    self.completions.len()
+                );
+                let ind_w = indicator.len() as u16;
+                let ind_area = Rect {
+                    x: popup_area.right().saturating_sub(ind_w),
+                    y: popup_area.y,
+                    width: ind_w,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(Span::styled(indicator, Style::default().fg(tp::MUTED))),
+                    ind_area,
+                );
+            }
         }
 
         Ok(())
