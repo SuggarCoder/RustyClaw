@@ -91,3 +91,36 @@ pub fn exec_skill_link_secret(args: &Value, _workspace_dir: &Path) -> Result<Str
 
     Err("Skill secret linking requires gateway connection.".into())
 }
+
+/// Create a new skill on disk from a name, description, and instructions body.
+///
+/// In standalone mode this writes directly via SkillManager.  When the
+/// gateway is running the request is intercepted there instead, but the
+/// same logic applies.
+pub fn exec_skill_create(args: &Value, workspace_dir: &Path) -> Result<String, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: name".to_string())?;
+    let description = args
+        .get("description")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: description".to_string())?;
+    let instructions = args
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: instructions".to_string())?;
+    let metadata = args.get("metadata").and_then(|v| v.as_str());
+
+    // Build the skills directory from the workspace (fallback for standalone)
+    let skills_dir = workspace_dir.join("skills");
+    let mut mgr = crate::skills::SkillManager::with_dirs(vec![skills_dir]);
+    match mgr.create_skill(name, description, instructions, metadata) {
+        Ok(path) => Ok(format!(
+            "✅ Skill '{}' created at {}\n\nThe skill is now loaded and available.",
+            name,
+            path.display()
+        )),
+        Err(e) => Err(format!("Failed to create skill: {e}")),
+    }
+}

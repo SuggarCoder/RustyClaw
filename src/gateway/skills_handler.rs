@@ -17,6 +17,7 @@ pub async fn execute_skill_tool(
         "skill_info" => exec_gw_skill_info(args, skill_mgr).await,
         "skill_enable" => exec_gw_skill_enable(args, skill_mgr).await,
         "skill_link_secret" => exec_gw_skill_link_secret(args, skill_mgr).await,
+        "skill_create" => exec_gw_skill_create(args, skill_mgr).await,
         _ => Err(format!("Unknown skill tool: {}", name)),
     }
 }
@@ -218,4 +219,35 @@ pub async fn exec_gw_skill_link_secret(
             action,
         )),
     }
+}
+
+/// Create a new skill from name, description, and instructions.
+pub async fn exec_gw_skill_create(
+    args: &serde_json::Value,
+    skill_mgr: &SharedSkillManager,
+) -> Result<String, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: name".to_string())?;
+    let description = args
+        .get("description")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: description".to_string())?;
+    let instructions = args
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Missing required parameter: instructions".to_string())?;
+    let metadata = args.get("metadata").and_then(|v| v.as_str());
+
+    let mut mgr = skill_mgr.lock().await;
+    let path = mgr
+        .create_skill(name, description, instructions, metadata)
+        .map_err(|e| e.to_string())?;
+
+    Ok(format!(
+        "✅ Skill '{}' created at {}\nThe skill is now loaded and available.",
+        name,
+        path.display(),
+    ))
 }

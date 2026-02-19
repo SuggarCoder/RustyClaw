@@ -162,6 +162,148 @@ struct RegistrySearchResponse {
     total: usize,
 }
 
+// ── ClawHub extended API types ──────────────────────────────────────────────
+
+/// A trending / featured skill from the ClawHub API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendingEntry {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub stars: u64,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub version: String,
+}
+
+/// Response wrapper for trending skills.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TrendingResponse {
+    #[serde(default)]
+    results: Vec<TrendingEntry>,
+    #[serde(default)]
+    skills: Vec<TrendingEntry>,
+}
+
+/// A skill category on ClawHub.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Category {
+    pub name: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub count: u64,
+}
+
+/// Response wrapper for categories.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CategoriesResponse {
+    #[serde(default)]
+    categories: Vec<Category>,
+}
+
+/// ClawHub user profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClawHubProfile {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub bio: String,
+    #[serde(default)]
+    pub published_count: u64,
+    #[serde(default)]
+    pub starred_count: u64,
+    #[serde(default)]
+    pub joined: String,
+}
+
+/// Response wrapper for profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProfileResponse {
+    #[serde(default)]
+    pub profile: Option<ClawHubProfile>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// A starred skill entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StarredEntry {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub starred_at: String,
+}
+
+/// Response wrapper for starred skills.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StarredResponse {
+    #[serde(default)]
+    results: Vec<StarredEntry>,
+}
+
+/// Auth response from ClawHub login.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthResponse {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+/// Detailed info about a single skill from the registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrySkillDetail {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub license: String,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(default)]
+    pub stars: u64,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub readme: Option<String>,
+    #[serde(default)]
+    pub required_secrets: Vec<String>,
+    #[serde(default)]
+    pub categories: Vec<String>,
+}
+
 // ── Skill manager ───────────────────────────────────────────────────────────
 
 /// Manages skills compatible with OpenClaw
@@ -483,7 +625,8 @@ impl SkillManager {
             context.push_str("No skills are currently loaded.\n\n");
             context.push_str("To find and install skills:\n");
             context.push_str("- Browse: https://clawhub.com\n");
-            context.push_str("- Install: `npm i -g clawhub && clawhub install <skill-name>`\n");
+            context.push_str("- Install: `npm i -g clawhub && clawhub install <skill-name>`\n\n");
+            self.append_skill_creation_instructions(&mut context);
             return context;
         }
 
@@ -503,14 +646,99 @@ impl SkillManager {
 
         // Add note about ClawHub for finding more skills
         context.push_str("To find more skills: https://clawhub.com\n");
-        context.push_str("To install a skill: `clawhub install <skill-name>` (requires npm i -g clawhub)\n");
+        context.push_str("To install a skill: `clawhub install <skill-name>` (requires npm i -g clawhub)\n\n");
+
+        // Add skill creation instructions so the agent can create skills from conversation
+        self.append_skill_creation_instructions(&mut context);
 
         context
+    }
+
+    /// Append instructions that teach the agent how to create new skills.
+    fn append_skill_creation_instructions(&self, context: &mut String) {
+        context.push_str("## Creating New Skills\n\n");
+        context.push_str("When a user asks you to create, author, or scaffold a new skill, use the `skill_create` tool.\n");
+        context.push_str("This tool creates the skill directory and SKILL.md file in the correct location.\n\n");
+        context.push_str("A skill is a directory containing a `SKILL.md` file with YAML frontmatter and markdown instructions.\n\n");
+        context.push_str("<skill_template>\n");
+        context.push_str("```\n");
+        context.push_str("---\n");
+        context.push_str("name: my-skill-name\n");
+        context.push_str("description: A concise one-line description of what this skill does\n");
+        context.push_str("metadata: {\"openclaw\": {\"emoji\": \"🔧\"}}\n");
+        context.push_str("---\n\n");
+        context.push_str("# Skill Title\n\n");
+        context.push_str("Detailed instructions for the agent to follow when this skill is activated.\n");
+        context.push_str("Include step-by-step guidance, tool usage patterns, and any constraints.\n");
+        context.push_str("```\n");
+        context.push_str("</skill_template>\n\n");
+        context.push_str("Frontmatter fields:\n");
+        context.push_str("- `name` (required): kebab-case identifier, used as the directory name\n");
+        context.push_str("- `description` (required): shown in skill listings, used for matching\n");
+        context.push_str("- `metadata` (optional): JSON with gating requirements, e.g.\n");
+        context.push_str("  `{\"openclaw\": {\"emoji\": \"⚡\", \"always\": false, \"requires\": {\"bins\": [\"git\", \"node\"]}}}`\n\n");
+
+        if let Some(dir) = self.primary_skills_dir() {
+            context.push_str(&format!("Skills directory: {}\n", dir.display()));
+        }
     }
 
     /// Get full instructions for a skill (for when agent reads SKILL.md)
     pub fn get_skill_instructions(&self, name: &str) -> Option<String> {
         self.get_skill(name).map(|s| s.instructions.clone())
+    }
+
+    // ── Skill creation ──────────────────────────────────────────────
+
+    /// Create a new skill on disk from name, description, and instructions.
+    ///
+    /// Writes `<primary_skills_dir>/<name>/SKILL.md` with YAML frontmatter
+    /// and the supplied markdown body, then reloads the skill list so the
+    /// new skill is immediately available.
+    pub fn create_skill(
+        &mut self,
+        name: &str,
+        description: &str,
+        instructions: &str,
+        metadata_json: Option<&str>,
+    ) -> Result<PathBuf> {
+        // Validate name is kebab-case-ish (no slashes, no spaces, no dots-leading)
+        if name.is_empty() {
+            anyhow::bail!("Skill name cannot be empty");
+        }
+        if name.contains('/') || name.contains('\\') || name.contains(' ') {
+            anyhow::bail!(
+                "Skill name must be a simple identifier (no slashes or spaces): {name}"
+            );
+        }
+
+        let skills_dir = self
+            .primary_skills_dir()
+            .ok_or_else(|| anyhow::anyhow!("No skills directory configured"))?
+            .to_path_buf();
+
+        let skill_dir = skills_dir.join(name);
+        if skill_dir.join("SKILL.md").exists() {
+            anyhow::bail!("Skill already exists: {name} (at {})", skill_dir.display());
+        }
+
+        std::fs::create_dir_all(&skill_dir)?;
+
+        // Build frontmatter
+        let mut fm = format!("---\nname: {name}\ndescription: {description}\n");
+        if let Some(meta) = metadata_json {
+            fm.push_str(&format!("metadata: {meta}\n"));
+        }
+        fm.push_str("---\n\n");
+
+        let content = format!("{fm}{instructions}\n");
+        let skill_path = skill_dir.join("SKILL.md");
+        std::fs::write(&skill_path, &content)?;
+
+        // Reload so the new skill is immediately visible
+        self.load_skills()?;
+
+        Ok(skill_path)
     }
 
     // ── Secret linking ──────────────────────────────────────────────
@@ -870,6 +1098,311 @@ impl SkillManager {
             "Published {} v{} to {}",
             manifest.name, manifest.version, self.registry_url,
         ))
+    }
+
+    // ── ClawHub extended API operations ─────────────────────────────
+
+    /// Return the registry URL for display or browser opening.
+    pub fn registry_url(&self) -> &str {
+        &self.registry_url
+    }
+
+    /// Return the registry auth token (if set).
+    pub fn registry_token(&self) -> Option<&str> {
+        self.registry_token.as_deref()
+    }
+
+    /// Authenticate with ClawHub using a username and password.
+    /// Returns the API token on success, which should be saved to config.
+    pub fn auth_login(&self, username: &str, password: &str) -> Result<AuthResponse> {
+        let url = format!("{}/api/v1/auth/login", self.registry_url);
+        let client = reqwest::blocking::Client::new();
+        let payload = serde_json::json!({
+            "username": username,
+            "password": password,
+        });
+
+        let resp = client
+            .post(&url)
+            .json(&payload)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .context("Failed to connect to ClawHub for authentication")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            anyhow::bail!("ClawHub auth failed (HTTP {}): {}", status, body);
+        }
+
+        let auth: AuthResponse = resp.json().context("Failed to parse auth response")?;
+        Ok(auth)
+    }
+
+    /// Authenticate with ClawHub using a pre-existing API token.
+    /// Validates the token and returns the profile info.
+    pub fn auth_token(&self, token: &str) -> Result<AuthResponse> {
+        let url = format!("{}/api/v1/auth/verify", self.registry_url);
+        let client = reqwest::blocking::Client::new();
+
+        let resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .context("Failed to connect to ClawHub for token verification")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            anyhow::bail!("ClawHub token verification failed (HTTP {}): {}", status, body);
+        }
+
+        let auth: AuthResponse = resp.json().context("Failed to parse auth response")?;
+        Ok(auth)
+    }
+
+    /// Check authentication status (whether a token is configured and valid).
+    pub fn auth_status(&self) -> Result<String> {
+        match &self.registry_token {
+            Some(token) => {
+                match self.auth_token(token) {
+                    Ok(resp) if resp.ok => {
+                        let user = resp.username.unwrap_or_else(|| "unknown".into());
+                        Ok(format!("Authenticated as '{}' on {}", user, self.registry_url))
+                    }
+                    Ok(_) => Ok(format!("Token configured but invalid on {}", self.registry_url)),
+                    Err(_) => Ok(format!(
+                        "Token configured but registry unreachable ({})",
+                        self.registry_url,
+                    )),
+                }
+            }
+            None => Ok(format!("Not authenticated. Run `/clawhub auth login` or set clawhub_token in config.")),
+        }
+    }
+
+    /// Fetch trending / popular skills from the ClawHub registry.
+    pub fn trending(&self, category: Option<&str>, limit: Option<usize>) -> Result<Vec<TrendingEntry>> {
+        let mut url = format!("{}/api/v1/trending", self.registry_url);
+        let mut params = vec![];
+        if let Some(cat) = category {
+            params.push(format!("category={}", urlencoding::encode(cat)));
+        }
+        if let Some(n) = limit {
+            params.push(format!("limit={}", n));
+        }
+        if !params.is_empty() {
+            url.push('?');
+            url.push_str(&params.join("&"));
+        }
+
+        let client = reqwest::blocking::Client::new();
+        let mut req = client.get(&url);
+        if let Some(ref token) = self.registry_token {
+            req = req.bearer_auth(token);
+        }
+
+        let resp = req
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .context("ClawHub registry is not reachable")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub trending request failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        let body: TrendingResponse = resp.json().context("Failed to parse trending response")?;
+        let entries = if !body.results.is_empty() {
+            body.results
+        } else {
+            body.skills
+        };
+
+        Ok(entries)
+    }
+
+    /// Fetch available categories from the ClawHub registry.
+    pub fn categories(&self) -> Result<Vec<Category>> {
+        let url = format!("{}/api/v1/categories", self.registry_url);
+        let client = reqwest::blocking::Client::new();
+        let mut req = client.get(&url);
+        if let Some(ref token) = self.registry_token {
+            req = req.bearer_auth(token);
+        }
+
+        let resp = req
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .context("ClawHub registry is not reachable")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub categories request failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        let body: CategoriesResponse = resp.json().context("Failed to parse categories response")?;
+        Ok(body.categories)
+    }
+
+    /// Fetch the authenticated user's profile from ClawHub.
+    pub fn profile(&self) -> Result<ClawHubProfile> {
+        let token = self.registry_token.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Not authenticated. Run `/clawhub auth login` or set clawhub_token in config.")
+        })?;
+
+        let url = format!("{}/api/v1/profile", self.registry_url);
+        let client = reqwest::blocking::Client::new();
+
+        let resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .context("ClawHub registry is not reachable")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub profile request failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        let body: ProfileResponse = resp.json().context("Failed to parse profile response")?;
+        match body.profile {
+            Some(profile) => Ok(profile),
+            None => anyhow::bail!(body.error.unwrap_or_else(|| "Profile not found".into())),
+        }
+    }
+
+    /// Fetch the authenticated user's starred skills from ClawHub.
+    pub fn starred(&self) -> Result<Vec<StarredEntry>> {
+        let token = self.registry_token.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Not authenticated. Run `/clawhub auth login` or set clawhub_token in config.")
+        })?;
+
+        let url = format!("{}/api/v1/starred", self.registry_url);
+        let client = reqwest::blocking::Client::new();
+
+        let resp = client
+            .get(&url)
+            .bearer_auth(token)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .context("ClawHub registry is not reachable")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub starred request failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        let body: StarredResponse = resp.json().context("Failed to parse starred response")?;
+        Ok(body.results)
+    }
+
+    /// Star a skill on ClawHub.
+    pub fn star(&self, skill_name: &str) -> Result<String> {
+        let token = self.registry_token.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Not authenticated. Run `/clawhub auth login` first.")
+        })?;
+
+        let url = format!(
+            "{}/api/v1/skills/{}/star",
+            self.registry_url,
+            urlencoding::encode(skill_name),
+        );
+        let client = reqwest::blocking::Client::new();
+
+        let resp = client
+            .post(&url)
+            .bearer_auth(token)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .context("ClawHub registry is not reachable")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub star failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        Ok(format!("Starred '{}'", skill_name))
+    }
+
+    /// Unstar a skill on ClawHub.
+    pub fn unstar(&self, skill_name: &str) -> Result<String> {
+        let token = self.registry_token.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Not authenticated. Run `/clawhub auth login` first.")
+        })?;
+
+        let url = format!(
+            "{}/api/v1/skills/{}/star",
+            self.registry_url,
+            urlencoding::encode(skill_name),
+        );
+        let client = reqwest::blocking::Client::new();
+
+        let resp = client
+            .delete(&url)
+            .bearer_auth(token)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .context("ClawHub registry is not reachable")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub unstar failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        Ok(format!("Unstarred '{}'", skill_name))
+    }
+
+    /// Get detailed info about a registry skill (not a locally installed one).
+    pub fn registry_info(&self, skill_name: &str) -> Result<RegistrySkillDetail> {
+        let url = format!(
+            "{}/api/v1/skills/{}",
+            self.registry_url,
+            urlencoding::encode(skill_name),
+        );
+
+        let client = reqwest::blocking::Client::new();
+        let mut req = client.get(&url);
+        if let Some(ref token) = self.registry_token {
+            req = req.bearer_auth(token);
+        }
+
+        let resp = req
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .context("ClawHub registry is not reachable")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "ClawHub skill info failed (HTTP {}): {}",
+                resp.status(),
+                resp.text().unwrap_or_default(),
+            );
+        }
+
+        let detail: RegistrySkillDetail =
+            resp.json().context("Failed to parse skill detail response")?;
+        Ok(detail)
     }
 }
 

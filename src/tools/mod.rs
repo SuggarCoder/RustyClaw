@@ -62,7 +62,7 @@ use devices::{exec_nodes, exec_canvas};
 use browser::exec_browser;
 
 // Skill operations
-use skills_tools::{exec_skill_list, exec_skill_search, exec_skill_install, exec_skill_info, exec_skill_enable, exec_skill_link_secret};
+use skills_tools::{exec_skill_list, exec_skill_search, exec_skill_install, exec_skill_info, exec_skill_enable, exec_skill_link_secret, exec_skill_create};
 
 // Secrets operations
 use secrets_tools::exec_secrets_stub;
@@ -210,6 +210,7 @@ pub fn tool_summary(name: &str) -> &'static str {
         "skill_info" => "View skill details",
         "skill_enable" => "Enable or disable skills",
         "skill_link_secret" => "Link vault secrets to skills",
+        "skill_create" => "Create a new skill from scratch",
         "disk_usage" => "Scan disk usage by folder",
         "classify_files" => "Categorize files as docs, caches, etc.",
         "system_monitor" => "View CPU, memory & process info",
@@ -291,6 +292,7 @@ pub fn all_tools() -> Vec<&'static ToolDef> {
         &SKILL_INFO,
         &SKILL_ENABLE,
         &SKILL_LINK_SECRET,
+        &SKILL_CREATE,
         &DISK_USAGE,
         &CLASSIFY_FILES,
         &SYSTEM_MONITOR,
@@ -643,6 +645,16 @@ pub static SKILL_LINK_SECRET: ToolDef = ToolDef {
     execute: exec_skill_link_secret,
 };
 
+pub static SKILL_CREATE: ToolDef = ToolDef {
+    name: "skill_create",
+    description: "Create a new skill on disk. Provide a name (kebab-case), a one-line \
+                  description, and the full markdown instructions body. The skill directory \
+                  and SKILL.md file are created automatically and the skill is immediately \
+                  available for use.",
+    parameters: vec![],
+    execute: exec_skill_create,
+};
+
 
 // ── System tools ────────────────────────────────────────────────────────────
 
@@ -898,6 +910,7 @@ fn resolve_params(tool: &ToolDef) -> Vec<ToolParam> {
         "skill_info" => skill_info_params(),
         "skill_enable" => skill_enable_params(),
         "skill_link_secret" => skill_link_secret_params(),
+        "skill_create" => skill_create_params(),
         "disk_usage" => disk_usage_params(),
         "classify_files" => classify_files_params(),
         "system_monitor" => system_monitor_params(),
@@ -1016,6 +1029,7 @@ pub fn is_skill_tool(name: &str) -> bool {
             | "skill_info"
             | "skill_enable"
             | "skill_link_secret"
+            | "skill_create"
     )
 }
 
@@ -1289,7 +1303,7 @@ mod tests {
     #[test]
     fn test_openai_format() {
         let tools = tools_openai();
-        assert_eq!(tools.len(), 55);
+        assert_eq!(tools.len(), 56);
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["function"]["name"], "read_file");
         assert!(tools[0]["function"]["parameters"]["properties"]["path"].is_object());
@@ -1298,7 +1312,7 @@ mod tests {
     #[test]
     fn test_anthropic_format() {
         let tools = tools_anthropic();
-        assert_eq!(tools.len(), 55);
+        assert_eq!(tools.len(), 56);
         assert_eq!(tools[0]["name"], "read_file");
         assert!(tools[0]["input_schema"]["properties"]["path"].is_object());
     }
@@ -1306,7 +1320,7 @@ mod tests {
     #[test]
     fn test_google_format() {
         let tools = tools_google();
-        assert_eq!(tools.len(), 55);
+        assert_eq!(tools.len(), 56);
         assert_eq!(tools[0]["name"], "read_file");
     }
 

@@ -921,6 +921,37 @@ pub fn skill_link_secret_params() -> Vec<ToolParam> {
     ]
 }
 
+pub fn skill_create_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "name".into(),
+            description: "Kebab-case skill name used as the directory name (e.g. 'deploy-s3').".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "description".into(),
+            description: "A concise one-line description of what this skill does.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "instructions".into(),
+            description: "The full markdown body of the skill (everything after the YAML frontmatter). \
+                           Include step-by-step guidance, tool usage patterns, and any constraints.".into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "metadata".into(),
+            description: "Optional JSON metadata string, e.g. \
+                           '{\"openclaw\": {\"emoji\": \"⚡\", \"requires\": {\"bins\": [\"git\"]}}}'.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+    ]
+}
+
 // ── System tools ────────────────────────────────────────────────────────────
 
 pub fn disk_usage_params() -> Vec<ToolParam> {
