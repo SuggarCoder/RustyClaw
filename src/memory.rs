@@ -1,10 +1,11 @@
 //! Memory search and retrieval for RustyClaw.
 //!
 //! Provides semantic-like search over `MEMORY.md` and `memory/*.md` files.
-//! Current implementation uses keyword/BM25-style matching; embeddings can be
-//! added later for true semantic search.
+//! Current implementation uses keyword/BM25-style matching with temporal decay
+//! for recency weighting. Embeddings can be added later for true semantic search.
 
-use std::collections::HashMap;
+use chrono::{NaiveDate, Utc};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -245,7 +246,90 @@ impl MemoryIndex {
         
         score
     }
+
+    /// Search with temporal decay (recency weighting).
+    ///
+    /// Recent memory files are boosted using exponential decay with configurable
+    /// half-life. Files that don't have a date in their path (like MEMORY.md)
+    /// are treated as "evergreen" and don't decay.
+    ///
+    /// # Arguments
+    /// * `query` - Search query string
+    /// * `max_results` - Maximum number of results to return
+    /// * `half_life_days` - Half-life for temporal decay in days (default: 30)
+    pub fn search_with_decay(
+        &self,
+        query: &str,
+        max_results: usize,
+        half_life_days: f64,
+    ) -> Vec<SearchResult> {
+        let query_terms = tokenize(query);
+
+        if query_terms.is_empty() || self.chunks.is_empty() {
+            return Vec::new();
+        }
+
+        let today = Utc::now().date_naive();
+        let decay_lambda = (2.0_f64).ln() / half_life_days;
+
+        let mut scores: Vec<(usize, f64)> = Vec::new();
+
+        for (idx, chunk) in self.chunks.iter().enumerate() {
+            let base_score = self.bm25_score(idx, &query_terms);
+
+            if base_score > 0.0 {
+                let decayed_score = if Self::is_evergreen(&chunk.path) {
+                    base_score // No decay for evergreen files
+                } else {
+                    let age_days = Self::extract_age_days(&chunk.path, today);
+                    let decay = (-decay_lambda * age_days as f64).exp();
+                    base_score * decay
+                };
+
+                scores.push((idx, decayed_score));
+            }
+        }
+
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        scores
+            .into_iter()
+            .take(max_results)
+            .map(|(idx, score)| SearchResult {
+                chunk: self.chunks[idx].clone(),
+                score,
+            })
+            .collect()
+    }
+
+    /// Check if a file path is "evergreen" (shouldn't decay).
+    ///
+    /// Evergreen files include MEMORY.md and any file not in the memory/ directory.
+    fn is_evergreen(path: &str) -> bool {
+        path == "MEMORY.md" || !path.starts_with("memory/")
+    }
+
+    /// Extract the age in days from a dated file path.
+    ///
+    /// Expects paths like "memory/2026-02-20.md" and returns days since that date.
+    /// Returns 0 for paths without a parseable date.
+    fn extract_age_days(path: &str, today: NaiveDate) -> i64 {
+        // Try to extract date from path like "memory/2026-02-20.md"
+        if let Some(filename) = path.strip_prefix("memory/") {
+            if let Some(date_str) = filename.strip_suffix(".md") {
+                // Handle nested paths like "memory/subfolder/2026-02-20.md"
+                let date_part = date_str.rsplit('/').next().unwrap_or(date_str);
+                if let Ok(date) = NaiveDate::parse_from_str(date_part, "%Y-%m-%d") {
+                    return (today - date).num_days().max(0);
+                }
+            }
+        }
+        0 // Unknown date = no decay
+    }
 }
+
+/// Files that should never be decayed (evergreen).
+const EVERGREEN_FILES: &[&str] = &["MEMORY.md"];
 
 impl Default for MemoryIndex {
     fn default() -> Self {
@@ -419,4 +503,74 @@ mod tests {
         // Single-char tokens should be filtered
         assert!(!tokens.contains(&"a".to_string()));
     }
+
+    #[test]
+    fn test_search_with_decay() {
+        let workspace = setup_test_workspace();
+        let index = MemoryIndex::index_workspace(workspace.path()).unwrap();
+        
+        // Search with recency weighting (30 day half-life)
+        let results = index.search_with_decay("memory tools", 5, 30.0);
+        assert!(!results.is_empty());
+        // Results from dated files should be ranked by recency
+    }
+
+    #[test]
+    fn test_is_evergreen() {
+        assert!(MemoryIndex::is_evergreen("MEMORY.md"));
+        assert!(MemoryIndex::is_evergreen("SOUL.md"));
+        assert!(!MemoryIndex::is_evergreen("memory/2026-02-20.md"));
+        assert!(!MemoryIndex::is_evergreen("memory/notes/2026-02-20.md"));
+    }
+
+    #[test]
+    fn test_extract_age_days() {
+        use chrono::NaiveDate;
+        
+        let today = NaiveDate::from_ymd_opt(2026, 2, 20).unwrap();
+        
+        // File from 5 days ago
+        let age = MemoryIndex::extract_age_days("memory/2026-02-15.md", today);
+        assert_eq!(age, 5);
+        
+        // File from today
+        let age = MemoryIndex::extract_age_days("memory/2026-02-20.md", today);
+        assert_eq!(age, 0);
+        
+        // File with non-date name
+        let age = MemoryIndex::extract_age_days("memory/notes.md", today);
+        assert_eq!(age, 0);
+        
+        // Nested path with date
+        let age = MemoryIndex::extract_age_days("memory/project/2026-02-10.md", today);
+        assert_eq!(age, 10);
+    }
+
+    #[test]
+    fn test_recency_affects_ranking() {
+        // Create workspace with files from different dates
+        let dir = TempDir::new().unwrap();
+        fs::create_dir(dir.path().join("memory")).unwrap();
+        
+        // Old file with the search term
+        fs::write(
+            dir.path().join("memory/2026-01-01.md"),
+            "# Old Note\nThis contains important search term.\n"
+        ).unwrap();
+        
+        // Recent file with the search term
+        fs::write(
+            dir.path().join("memory/2026-02-19.md"),
+            "# Recent Note\nThis also contains important search term.\n"
+        ).unwrap();
+        
+        let index = MemoryIndex::index_workspace(dir.path()).unwrap();
+        
+        // With recency weighting, recent file should rank higher
+        let results = index.search_with_decay("important search term", 2, 30.0);
+        assert_eq!(results.len(), 2);
+        // The more recent file should be first
+        assert!(results[0].chunk.path.contains("2026-02"));
+    }
 }
+

@@ -3,7 +3,13 @@
 use serde_json::Value;
 use std::path::Path;
 
+/// Default half-life for temporal decay in days.
+const DEFAULT_HALF_LIFE_DAYS: f64 = 30.0;
+
 /// Search memory files for relevant content.
+///
+/// Supports optional recency boosting via temporal decay. Recent memory files
+/// are weighted higher using exponential decay with a configurable half-life.
 pub fn exec_memory_search(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let query = args
         .get("query")
@@ -20,9 +26,25 @@ pub fn exec_memory_search(args: &Value, workspace_dir: &Path) -> Result<String, 
         .and_then(|v| v.as_f64())
         .unwrap_or(0.1);
 
+    // Recency boost options
+    let use_recency = args
+        .get("recencyBoost")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true); // Enabled by default
+
+    let half_life_days = args
+        .get("halfLifeDays")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(DEFAULT_HALF_LIFE_DAYS);
+
     // Build index and search
     let index = crate::memory::MemoryIndex::index_workspace(workspace_dir)?;
-    let results = index.search(query, max_results);
+    
+    let results = if use_recency {
+        index.search_with_decay(query, max_results, half_life_days)
+    } else {
+        index.search(query, max_results)
+    };
 
     if results.is_empty() {
         return Ok("No matching memories found.".to_string());
@@ -30,7 +52,11 @@ pub fn exec_memory_search(args: &Value, workspace_dir: &Path) -> Result<String, 
 
     // Filter by minimum score and format results
     let mut output = String::new();
-    output.push_str(&format!("Memory search results for: {}\n\n", query));
+    output.push_str(&format!("Memory search results for: {}\n", query));
+    if use_recency {
+        output.push_str(&format!("(recency boost enabled, half-life: {} days)\n", half_life_days));
+    }
+    output.push('\n');
 
     let mut count = 0;
     for result in results {

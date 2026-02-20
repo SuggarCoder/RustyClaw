@@ -310,6 +310,18 @@ pub fn memory_search_params() -> Vec<ToolParam> {
             param_type: "number".into(),
             required: false,
         },
+        ToolParam {
+            name: "recencyBoost".into(),
+            description: "Enable recency weighting to boost recent memories. Default: true.".into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "halfLifeDays".into(),
+            description: "Half-life for temporal decay in days. Lower values favor recent memories more strongly. Default: 30.".into(),
+            param_type: "number".into(),
+            required: false,
+        },
     ]
 }
 
