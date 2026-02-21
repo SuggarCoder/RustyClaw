@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use anyhow::{Context, Result};
+use tracing::{debug, info};
 
 /// Shared health statistics
 pub struct HealthStats {
@@ -62,12 +63,12 @@ pub async fn start_health_server(
         .await
         .context("Failed to bind health check server")?;
 
-    eprintln!("[health] Listening on http://{}", listen_addr);
+    info!(address = %listen_addr, "Health check server listening");
 
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
-                eprintln!("[health] Shutting down health check server");
+                info!("Shutting down health check server");
                 break;
             }
             accepted = listener.accept() => {
@@ -76,7 +77,7 @@ pub async fn start_health_server(
 
                 tokio::spawn(async move {
                     if let Err(e) = handle_health_request(stream, stats_clone).await {
-                        eprintln!("[health] Request error: {}", e);
+                        debug!(error = %e, "Health check request error");
                     }
                 });
             }
