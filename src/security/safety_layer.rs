@@ -46,6 +46,7 @@ use anyhow::{bail, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
+use tracing::{debug, warn};
 
 /// Policy action to take when a security issue is detected
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,7 +247,7 @@ impl SafetyLayer {
         let mut ssrf_validator = SsrfValidator::new(config.allow_private_ips);
         for cidr in &config.blocked_cidr_ranges {
             if let Err(e) = ssrf_validator.add_blocked_range(cidr) {
-                eprintln!("[SafetyLayer] Warning: Failed to add CIDR range '{}': {}", cidr, e);
+                warn!(cidr = %cidr, error = %e, "Failed to add CIDR range to SSRF validator");
             }
         }
 
@@ -295,7 +296,7 @@ impl SafetyLayer {
                         bail!("SSRF protection blocked URL: {}", reason);
                     }
                     PolicyAction::Warn => {
-                        eprintln!("[SafetyLayer] SSRF warning: {}", reason);
+                        warn!(reason = %reason, "SSRF warning");
                         Ok(DefenseResult::detected(
                             DefenseCategory::Ssrf,
                             PolicyAction::Warn,
@@ -359,7 +360,7 @@ impl SafetyLayer {
                     ).with_sanitized(sanitized))
                 } else {
                     if action == PolicyAction::Warn {
-                        eprintln!("[SafetyLayer] Prompt injection detected (score: {:.2}): {}", score, patterns.join(", "));
+                        warn!(score = score, patterns = %patterns.join(", "), "Prompt injection detected");
                     }
                     Ok(DefenseResult::detected(
                         DefenseCategory::PromptInjection,
@@ -393,10 +394,10 @@ impl SafetyLayer {
                 bail!("Credential leak detected: {}", leak_result.details.join(", "));
             }
             PolicyAction::Warn => {
-                eprintln!(
-                    "[SafetyLayer] Potential credential leak (score: {:.2}): {}",
-                    leak_result.score,
-                    leak_result.details.join(", ")
+                warn!(
+                    score = leak_result.score,
+                    details = %leak_result.details.join(", "),
+                    "Potential credential leak detected"
                 );
                 Ok(DefenseResult::detected(
                     DefenseCategory::LeakDetection,
