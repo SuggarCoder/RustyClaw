@@ -113,7 +113,7 @@ pub async fn exec_gw_skill_search(
             display, r.name, version_str, r.description, secrets_note,
         ));
     }
-    lines.push("\nTo install: clawhub install <skill-name>".to_string());
+    lines.push("\nTo install: /skill install <skill-name>".to_string());
     Ok(lines.join(""))
 }
 

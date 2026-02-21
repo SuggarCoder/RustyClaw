@@ -2,6 +2,106 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+// ── Blocking retry helpers (for ClawHub HTTP calls) ─────────────────────────
+
+/// Maximum retry attempts for ClawHub API calls.
+const CLAWHUB_MAX_RETRIES: u32 = 4;
+/// Base delay for exponential backoff.
+const CLAWHUB_BASE_DELAY: Duration = Duration::from_millis(500);
+/// Maximum delay cap.
+const CLAWHUB_MAX_DELAY: Duration = Duration::from_secs(15);
+
+/// Send a blocking request with retry + exponential backoff for 429 / 5xx.
+/// Returns the successful response or the last error.
+fn blocking_request_with_retry(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<reqwest::blocking::Response> {
+    let mut last_err: Option<anyhow::Error> = None;
+
+    for attempt in 1..=CLAWHUB_MAX_RETRIES {
+        let mut req = client.get(url);
+        if let Some(tok) = token {
+            req = req.bearer_auth(tok);
+        }
+
+        match req.timeout(timeout).send() {
+            Ok(resp) => {
+                let status = resp.status();
+
+                // Success — return immediately.
+                if status.is_success() {
+                    return Ok(resp);
+                }
+
+                // Retry on 429 or 5xx — honour Retry-After header if present.
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+                    let retry_after = resp
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.trim().parse::<u64>().ok())
+                        .map(Duration::from_secs);
+
+                    let body = resp.text().unwrap_or_default();
+
+                    let backoff = backoff_delay(attempt);
+                    let delay = retry_after.unwrap_or(backoff);
+
+                    last_err = Some(anyhow::anyhow!(
+                        "HTTP {} from ClawHub: {}",
+                        status,
+                        body,
+                    ));
+
+                    if attempt < CLAWHUB_MAX_RETRIES {
+                        std::thread::sleep(delay);
+                        continue;
+                    }
+
+                    // Final attempt — fall through to bail below.
+                    anyhow::bail!(
+                        "ClawHub request failed (HTTP {}) after {} retries: {}",
+                        status,
+                        CLAWHUB_MAX_RETRIES,
+                        body,
+                    );
+                }
+
+                // Non-retryable error — bail immediately.
+                anyhow::bail!(
+                    "ClawHub request failed (HTTP {}): {}",
+                    status,
+                    resp.text().unwrap_or_default(),
+                );
+            }
+            Err(e) => {
+                // Retry on timeout / connect errors.
+                if (e.is_timeout() || e.is_connect()) && attempt < CLAWHUB_MAX_RETRIES {
+                    let delay = backoff_delay(attempt);
+                    last_err = Some(e.into());
+                    std::thread::sleep(delay);
+                    continue;
+                }
+                return Err(e.into());
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("ClawHub request failed after retries")))
+}
+
+/// Exponential backoff: 500ms → 1s → 2s → 4s … capped at CLAWHUB_MAX_DELAY.
+fn backoff_delay(attempt: u32) -> Duration {
+    let shift = attempt.saturating_sub(1).min(31);
+    let multiplier = 1u64 << shift;
+    let millis = CLAWHUB_BASE_DELAY.as_millis() as u64 * multiplier;
+    Duration::from_millis(millis).min(CLAWHUB_MAX_DELAY)
+}
 
 // ── ClawHub constants ───────────────────────────────────────────────────────
 
@@ -625,7 +725,7 @@ impl SkillManager {
             context.push_str("No skills are currently loaded.\n\n");
             context.push_str("To find and install skills:\n");
             context.push_str("- Browse: https://clawhub.com\n");
-            context.push_str("- Install: `npm i -g clawhub && clawhub install <skill-name>`\n\n");
+            context.push_str("- Install: `/skill install <skill-name>` or `rustyclaw clawhub install <skill-name>`\n\n");
             self.append_skill_creation_instructions(&mut context);
             return context;
         }
@@ -646,7 +746,7 @@ impl SkillManager {
 
         // Add note about ClawHub for finding more skills
         context.push_str("To find more skills: https://clawhub.com\n");
-        context.push_str("To install a skill: `clawhub install <skill-name>` (requires npm i -g clawhub)\n\n");
+        context.push_str("To install a skill: `/skill install <skill-name>` or `rustyclaw clawhub install <skill-name>`\n\n");
 
         // Add skill creation instructions so the agent can create skills from conversation
         self.append_skill_creation_instructions(&mut context);
@@ -904,23 +1004,13 @@ impl SkillManager {
         );
 
         let client = reqwest::blocking::Client::new();
-        let mut req = client.get(&url);
-        if let Some(ref token) = self.registry_token {
-            req = req.bearer_auth(token);
-        }
-
-        let resp = req
-            .timeout(std::time::Duration::from_secs(5))
-            .send()
-            .context("ClawHub registry is not reachable")?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!(
-                "ClawHub search failed (HTTP {}): {}",
-                resp.status(),
-                resp.text().unwrap_or_default(),
-            );
-        }
+        let resp = blocking_request_with_retry(
+            &client,
+            &url,
+            self.registry_token.as_deref(),
+            Duration::from_secs(10),
+        )
+        .context("ClawHub registry is not reachable")?;
 
         let body: RegistrySearchResponse = resp.json().context("Failed to parse registry response")?;
 
@@ -953,23 +1043,13 @@ impl SkillManager {
         }
 
         let client = reqwest::blocking::Client::new();
-        let mut req = client.get(&url);
-        if let Some(ref token) = self.registry_token {
-            req = req.bearer_auth(token);
-        }
-
-        let resp = req
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .context("Failed to download skill from ClawHub")?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!(
-                "ClawHub install failed (HTTP {}): {}",
-                resp.status(),
-                resp.text().unwrap_or_default(),
-            );
-        }
+        let resp = blocking_request_with_retry(
+            &client,
+            &url,
+            self.registry_token.as_deref(),
+            Duration::from_secs(30),
+        )
+        .context("Failed to download skill from ClawHub")?;
 
         // Response is a zip file
         let zip_bytes = resp.bytes().context("Failed to read zip data")?;

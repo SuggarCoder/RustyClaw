@@ -19,11 +19,11 @@ pub fn exec_skill_search(args: &Value, _workspace_dir: &Path) -> Result<String, 
     // Point users to the clawhub CLI
     Ok(format!(
         "To search for skills matching '{}':\n\n\
-         1. Install the ClawHub CLI: npm i -g clawhub\n\
-         2. Search: clawhub search \"{}\"\n\
-         3. Install: clawhub install <skill-name>\n\n\
-         Or browse skills at: https://clawhub.com",
-        query, query,
+         1. Use the /skill search command: /skill search \"{}\"\n\
+         2. Install: /skill install <skill-name>\n\n\
+         Or from the CLI: rustyclaw clawhub search \"{}\"\n\
+         Browse skills at: https://clawhub.com",
+        query, query, query,
     ))
 }
 
@@ -36,10 +36,10 @@ pub fn exec_skill_install(args: &Value, _workspace_dir: &Path) -> Result<String,
 
     Ok(format!(
         "To install the '{}' skill:\n\n\
-         1. Install the ClawHub CLI (if not already): npm i -g clawhub\n\
-         2. Install the skill: clawhub install {}\n\n\
-         The skill will be installed to your workspace/skills directory.",
-        name, name,
+         Use the /skill install command: /skill install {}\n\
+         Or from the CLI: rustyclaw clawhub install {}\n\n\
+         The skill will be downloaded from ClawHub and installed to your skills directory.",
+        name, name, name,
     ))
 }
 
