@@ -507,6 +507,10 @@ enum ClawHubAuthCommands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize structured logging from environment variables.
+    // Set RUSTYCLAW_LOG=debug or RUST_LOG=debug for verbose output.
+    rustyclaw::logging::init_from_env();
+
     let cli = Cli::parse();
 
     // Initialise colour output (respects --no-color / NO_COLOR).

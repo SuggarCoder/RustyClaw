@@ -52,6 +52,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, trace, warn};
 
 /// Shared flag for cancelling the tool loop from another task.
 pub type ToolCancelFlag = Arc<AtomicBool>;
@@ -128,11 +129,11 @@ fn try_import_openclaw_token(vault: &mut SecretsManager) -> Option<CopilotSessio
 
     let remaining = expires_at - now;
     if remaining <= 60 {
-        eprintln!("  ⊘ OpenClaw token also expired");
+        debug!("OpenClaw token also expired");
         return None;
     }
 
-    eprintln!("  ✓ Auto-imported fresh token from OpenClaw (~{}h remaining)", remaining / 3600);
+    info!(remaining_hours = remaining / 3600, "Auto-imported fresh token from OpenClaw");
 
     // Store in our vault for next time
     let session_data = serde_json::json!({
@@ -140,7 +141,7 @@ fn try_import_openclaw_token(vault: &mut SecretsManager) -> Option<CopilotSessio
         "expires_at": expires_at,
     });
     if let Err(e) = vault.store_secret("GITHUB_COPILOT_SESSION", &session_data.to_string()) {
-        eprintln!("    ⚠ Failed to cache in vault: {}", e);
+        warn!(error = %e, "Failed to cache imported token in vault");
     }
 
     Some(CopilotSession::from_session_token(token.to_string(), expires_at))
@@ -210,7 +211,7 @@ pub async fn run_gateway(
                     .with_single_cert(certs, key)
                     .context("Invalid TLS certificate/key")?;
 
-                eprintln!("[gateway] TLS enabled (WSS)");
+                info!("TLS enabled (WSS)");
                 Some(tokio_rustls::TlsAcceptor::from(Arc::new(tls_config)))
             }
             (Some(_), None) | (None, Some(_)) => {
@@ -234,7 +235,7 @@ pub async fn run_gateway(
 
         let mut session_from_import = match &session_result {
             Ok(Some(json_str)) => {
-                eprintln!("  ✓ Found GITHUB_COPILOT_SESSION in vault");
+                debug!("Found GITHUB_COPILOT_SESSION in vault");
                 serde_json::from_str::<serde_json::Value>(json_str)
                     .ok()
                     .and_then(|json| {
@@ -247,22 +248,22 @@ pub async fn run_gateway(
                             .as_secs() as i64;
 
                         let remaining = expires_at - now;
-                        eprintln!("    Session expires in {}s", remaining);
+                        debug!(remaining_seconds = remaining, "Session expiry check");
 
                         if remaining > 60 {
                             Some(CopilotSession::from_session_token(token, expires_at))
                         } else {
-                            eprintln!("    Session expired or expiring soon");
+                            debug!("Session expired or expiring soon");
                             None
                         }
                     })
             }
             Ok(None) => {
-                eprintln!("  ⊘ GITHUB_COPILOT_SESSION not found in vault");
+                debug!("GITHUB_COPILOT_SESSION not found in vault");
                 None
             }
             Err(e) => {
-                eprintln!("  ✗ Failed to read GITHUB_COPILOT_SESSION: {}", e);
+                warn!(error = %e, "Failed to read GITHUB_COPILOT_SESSION");
                 None
             }
         };
@@ -276,15 +277,15 @@ pub async fn run_gateway(
         drop(vault_guard);
 
         if let Some(session) = session_from_import {
-            eprintln!("  ✓ Using imported session token");
+            debug!("Using imported session token");
             Some(Arc::new(session))
         } else {
             // Fall back to OAuth token
             if let Some(oauth) = model_ctx.as_ref().and_then(|ctx| ctx.api_key.clone()) {
-                eprintln!("  → Falling back to OAuth token");
+                debug!("Falling back to OAuth token");
                 Some(Arc::new(CopilotSession::new(oauth)))
             } else {
-                eprintln!("  ✗ No OAuth token available either");
+                warn!("No OAuth token available either");
                 None
             }
         }
@@ -323,14 +324,14 @@ pub async fn run_gateway(
                         messenger_skills,
                         messenger_cancel,
                     ).await {
-                        eprintln!("[gateway] Messenger loop error: {}", e);
+                        error!(error = %e, "Messenger loop error");
                     }
                 });
 
                 Some(shared_mgr)
             }
             Err(e) => {
-                eprintln!("[gateway] Failed to initialize messengers: {}", e);
+                error!(error = %e, "Failed to initialize messengers");
                 None
             }
         }
@@ -338,9 +339,9 @@ pub async fn run_gateway(
         None
     };
 
-    eprintln!("[gateway] Listening on {}", addr);
+    info!(address = %addr, "Gateway listening");
     if messenger_mgr.is_some() {
-        eprintln!("[gateway] Messenger polling enabled");
+        info!("Messenger polling enabled");
     }
 
     loop {
@@ -364,7 +365,7 @@ pub async fn run_gateway(
                         match acceptor.accept(stream).await {
                             Ok(tls_stream) => Box::new(tls_stream),
                             Err(err) => {
-                                eprintln!("TLS handshake failed from {}: {}", peer, err);
+                                warn!(peer = %peer, error = %err, "TLS handshake failed");
                                 return;
                             }
                         }
@@ -377,7 +378,7 @@ pub async fn run_gateway(
                         session_clone, vault_clone, skill_clone,
                         limiter_clone, child_cancel,
                     ).await {
-                        eprintln!("Gateway connection error from {}: {}", peer, err);
+                        debug!(peer = %peer, error = %err, "Connection error");
                     }
                 });
             }
@@ -492,7 +493,7 @@ async fn handle_connection(
                     }
                 }
                 Ok(Err(e)) => {
-                    eprintln!("Auth error from {}: {}", peer, e);
+                    warn!(peer = %peer, error = %e, "Authentication error");
                     return Ok(());
                 }
                 Err(_) => {
@@ -685,11 +686,11 @@ async fn handle_connection(
                             continue;
                         }
                         Some(Ok(Message::Binary(ref data))) => {
-                            eprintln!("[Gateway][DEBUG] Received Binary frame from client: {} bytes", data.len());
+                            trace!(bytes = data.len(), "Received Binary frame from client");
                             // Check for cancel message in binary
                             match parse_client_frame(data) {
                                 Ok(frame) => {
-                                    eprintln!("[Gateway][DEBUG] Parsed client frame: {:?}", frame.frame_type);
+                                    trace!(frame_type = ?frame.frame_type, "Parsed client frame");
                                     if frame.frame_type == ClientFrameType::Cancel {
                                         reader_tool_cancel.store(true, Ordering::Relaxed);
                                         continue;
@@ -708,7 +709,7 @@ async fn handle_connection(
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("[Gateway][DEBUG] Failed to parse client frame: {}", e);
+                                    trace!(error = %e, "Failed to parse client frame");
                                 }
                             }
                             // Forward binary messages
@@ -717,13 +718,13 @@ async fn handle_connection(
                             }
                         }
                         Some(Ok(msg)) => {
-                            eprintln!("[Gateway][DEBUG] Received non-binary message from client: {:?}", msg);
+                            trace!(message = ?msg, "Received non-binary message from client");
                             if msg_tx.send(msg).await.is_err() {
                                 break;
                             }
                         }
                         Some(Err(e)) => {
-                            eprintln!("[Gateway][DEBUG] Error reading message from client: {}", e);
+                            trace!(error = %e, "Error reading message from client");
                             break;
                         }
                         None => break,
@@ -747,18 +748,18 @@ async fn handle_connection(
                 };
                 match message {
                     Message::Binary(data) => {
-                        eprintln!("[Gateway][DEBUG] Handling Binary message from client: {} bytes", data.len());
+                        trace!(bytes = data.len(), "Handling Binary message from client");
                         // Reset cancel flag for new request
                         tool_cancel.store(false, Ordering::Relaxed);
 
                         // Parse the binary frame
                         let frame = match deserialize_frame::<ClientFrame>(&data) {
                             Ok(f) => {
-                                eprintln!("[Gateway][DEBUG] Successfully deserialized ClientFrame: {:?}", f.frame_type);
+                                trace!(frame_type = ?f.frame_type, "Successfully deserialized ClientFrame");
                                 f
                             },
                             Err(e) => {
-                                eprintln!("[Gateway][DEBUG] Failed to deserialize ClientFrame: {}", e);
+                                debug!(error = %e, "Failed to deserialize ClientFrame");
                                 // Send error response
                                 let error_frame = ServerFrame {
                                     frame_type: ServerFrameType::Error,
@@ -1420,14 +1421,14 @@ async fn dispatch_text_message(
         // Stream any text content to the client.
         // For Anthropic, text is already streamed via the writer, so skip if empty.
         // For other providers, send the accumulated text.
-        eprintln!(
-            "[Gateway] provider='{}', text_len={}, tool_calls={}",
-            resolved.provider,
-            model_resp.text.len(),
-            model_resp.tool_calls.len()
+        trace!(
+            provider = %resolved.provider,
+            text_len = model_resp.text.len(),
+            tool_calls = model_resp.tool_calls.len(),
+            "Model response received"
         );
         if !model_resp.text.is_empty() && resolved.provider != "anthropic" {
-            eprintln!("[Gateway] Sending chunk to TUI: {} chars", model_resp.text.len());
+            trace!(chars = model_resp.text.len(), "Sending chunk to TUI");
             providers::send_chunk(writer, &model_resp.text).await?;
         }
 
@@ -1503,11 +1504,11 @@ async fn dispatch_text_message(
 
                 if should_continue {
                     consecutive_continues += 1;
-                    eprintln!(
-                        "[Gateway] Detected incomplete intent ({} chars text, no tool calls, attempt {}/{}), prompting continuation",
-                        model_resp.text.len(),
-                        consecutive_continues,
-                        MAX_AUTO_CONTINUES
+                    debug!(
+                        text_chars = model_resp.text.len(),
+                        attempt = consecutive_continues,
+                        max_attempts = MAX_AUTO_CONTINUES,
+                        "Detected incomplete intent, prompting continuation"
                     );
 
                     // NOTE: do NOT re-send the text here — for non-Anthropic

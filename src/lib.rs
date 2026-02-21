@@ -11,6 +11,7 @@ pub mod daemon;
 pub mod dialogs;
 pub mod error;
 pub mod gateway;
+pub mod logging;
 pub mod memory;
 pub mod memory_flush;
 pub mod messengers;

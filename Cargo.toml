@@ -107,8 +107,9 @@ urlencoding = "2.1"
 chrono = "0.4"
 zip = "8.0"
 
-# Tracing for structured logging (used by app.rs, tui-markdown)
+# Tracing for structured logging
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Binary serialization for gateway protocol
 bincode = { version = "2.0", features = ["serde"] }

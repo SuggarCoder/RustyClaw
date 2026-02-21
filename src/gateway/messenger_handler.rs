@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, trace, warn};
 
 use super::providers;
 use super::secrets_handler;
@@ -63,17 +64,18 @@ pub async fn create_messenger_manager(config: &Config) -> Result<MessengerManage
         }
         match create_messenger(messenger_config).await {
             Ok(messenger) => {
-                eprintln!(
-                    "[messenger] Initialized {} ({})",
-                    messenger.name(),
-                    messenger.messenger_type()
+                info!(
+                    name = %messenger.name(),
+                    messenger_type = %messenger.messenger_type(),
+                    "Messenger initialized"
                 );
                 manager.add_messenger(messenger);
             }
             Err(e) => {
-                eprintln!(
-                    "[messenger] Failed to initialize {}: {}",
-                    messenger_config.messenger_type, e
+                error!(
+                    messenger_type = %messenger_config.messenger_type,
+                    error = %e,
+                    "Failed to initialize messenger"
                 );
             }
         }
@@ -170,7 +172,7 @@ pub async fn run_messenger_loop(
     let model_ctx = match model_ctx {
         Some(ctx) => ctx,
         None => {
-            eprintln!("[messenger] No model context — messenger loop disabled");
+            warn!("No model context — messenger loop disabled");
             return Ok(());
         }
     };
@@ -187,15 +189,15 @@ pub async fn run_messenger_loop(
 
     let http = reqwest::Client::new();
 
-    eprintln!(
-        "[messenger] Starting messenger loop (poll interval: {:?})",
-        poll_interval
+    info!(
+        poll_interval_ms = poll_interval.as_millis(),
+        "Starting messenger loop"
     );
 
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
-                eprintln!("[messenger] Shutting down messenger loop");
+                info!("Shutting down messenger loop");
                 break;
             }
             _ = tokio::time::sleep(poll_interval) => {
@@ -220,7 +222,7 @@ pub async fn run_messenger_loop(
                     )
                     .await
                     {
-                        eprintln!("[messenger] Error processing message: {}", e);
+                        error!(error = %e, "Error processing message");
                     }
                 }
             }
@@ -242,10 +244,10 @@ async fn poll_all_messengers(mgr: &MessengerManager) -> Vec<(String, Message)> {
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "[messenger] Error polling {}: {}",
-                    messenger.messenger_type(),
-                    e
+                debug!(
+                    messenger_type = %messenger.messenger_type(),
+                    error = %e,
+                    "Error polling messenger"
                 );
             }
         }
@@ -266,15 +268,15 @@ async fn process_incoming_message(
     messenger_type: &str,
     msg: Message,
 ) -> Result<()> {
-    eprintln!(
-        "[messenger] Received from {} ({}): {}",
-        msg.sender,
-        messenger_type,
-        if msg.content.len() > 50 {
+    debug!(
+        sender = %msg.sender,
+        messenger_type = %messenger_type,
+        content_preview = %if msg.content.len() > 50 {
             format!("{}...", &msg.content[..50])
         } else {
             msg.content.clone()
-        }
+        },
+        "Received message"
     );
 
     let workspace_dir = config.workspace_dir();
@@ -314,7 +316,7 @@ async fn process_incoming_message(
     };
 
     if !images.is_empty() {
-        eprintln!("[messenger] Processing {} image(s) (vision not yet supported in messenger handler)", images.len());
+        debug!(image_count = images.len(), "Processing images (vision not yet supported in messenger handler)");
     }
 
     // Build media refs for history storage
@@ -347,7 +349,7 @@ async fn process_incoming_message(
         let model_resp = match result {
             Ok(r) => r,
             Err(err) => {
-                eprintln!("[messenger] Model error: {}", err);
+                error!(error = %err, "Model error");
                 return Err(err);
             }
         };
@@ -366,7 +368,7 @@ async fn process_incoming_message(
         let mut tool_results: Vec<ToolCallResult> = Vec::new();
 
         for tc in &model_resp.tool_calls {
-            eprintln!("[messenger] Tool call: {} ({})", tc.name, tc.id);
+            debug!(tool_name = %tc.name, tool_id = %tc.id, "Executing tool call");
 
             let (output, is_error) = if tools::is_secrets_tool(&tc.name) {
                 match secrets_handler::execute_secrets_tool(&tc.name, &tc.arguments, vault).await {
@@ -385,14 +387,15 @@ async fn process_incoming_message(
                 }
             };
 
-            eprintln!(
-                "[messenger] Tool result ({}): {}",
-                if is_error { "error" } else { "ok" },
-                if output.len() > 100 {
+            trace!(
+                tool_name = %tc.name,
+                is_error = is_error,
+                output_preview = %if output.len() > 100 {
                     format!("{}...", &output[..100])
                 } else {
                     output.clone()
-                }
+                },
+                "Tool result"
             );
 
             tool_results.push(ToolCallResult {
@@ -454,18 +457,18 @@ async fn process_incoming_message(
 
             match messenger.send_message_with_options(opts).await {
                 Ok(msg_id) => {
-                    eprintln!(
-                        "[messenger] Sent response ({}): {}",
-                        msg_id,
-                        if final_response.len() > 50 {
+                    debug!(
+                        message_id = %msg_id,
+                        response_preview = %if final_response.len() > 50 {
                             format!("{}...", &final_response[..50])
                         } else {
                             final_response.clone()
-                        }
+                        },
+                        "Sent response"
                     );
                 }
                 Err(e) => {
-                    eprintln!("[messenger] Failed to send response: {}", e);
+                    warn!(error = %e, "Failed to send response");
                 }
             }
         }
@@ -588,7 +591,7 @@ async fn download_image(
     let cache_path = cache_dir.join(format!("{}.{}", media_ref.id, ext));
     
     if let Err(e) = tokio::fs::write(&cache_path, &bytes).await {
-        eprintln!("[messenger] Failed to cache image: {}", e);
+        debug!(error = %e, path = %cache_path.display(), "Failed to cache image");
     } else {
         media_ref.local_path = Some(cache_path.to_string_lossy().to_string());
     }
@@ -626,7 +629,7 @@ async fn load_image_from_path(path: &str, cache_dir: &std::path::Path) -> Result
     let cache_path = cache_dir.join(format!("{}.{}", media_ref.id, ext));
     
     if let Err(e) = tokio::fs::write(&cache_path, &data).await {
-        eprintln!("[messenger] Failed to cache image: {}", e);
+        debug!(error = %e, path = %cache_path.display(), "Failed to cache image");
     } else {
         media_ref.local_path = Some(cache_path.to_string_lossy().to_string());
     }
@@ -708,7 +711,7 @@ async fn process_attachments(
 ) -> Vec<ImageData> {
     // Ensure cache directory exists
     if let Err(e) = tokio::fs::create_dir_all(cache_dir).await {
-        eprintln!("[messenger] Failed to create cache dir: {}", e);
+        debug!(error = %e, path = %cache_dir.display(), "Failed to create cache dir");
     }
 
     let mut images = Vec::new();
@@ -732,16 +735,16 @@ async fn process_attachments(
 
         match result {
             Ok(img) => {
-                eprintln!(
-                    "[messenger] Downloaded image: {} ({} bytes) -> {}",
-                    attachment.filename.as_deref().unwrap_or("unknown"),
-                    img.data.len(),
-                    img.media_ref.id
+                trace!(
+                    filename = %attachment.filename.as_deref().unwrap_or("unknown"),
+                    size_bytes = img.data.len(),
+                    media_id = %img.media_ref.id,
+                    "Downloaded image"
                 );
                 images.push(img);
             }
             Err(e) => {
-                eprintln!("[messenger] Failed to process attachment: {}", e);
+                debug!(error = %e, "Failed to process attachment");
             }
         }
     }
