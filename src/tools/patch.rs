@@ -3,8 +3,10 @@
 use super::helpers::resolve_path;
 use serde_json::Value;
 use std::path::Path;
+use tracing::{debug, warn, instrument};
 
 /// Apply a unified diff patch to files.
+#[instrument(skip(args, workspace_dir))]
 pub fn exec_apply_patch(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let patch_content = args
         .get("patch")
@@ -17,12 +19,17 @@ pub fn exec_apply_patch(args: &Value, workspace_dir: &Path) -> Result<String, St
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    debug!(patch_len = patch_content.len(), dry_run, "Applying patch");
+
     // Parse the patch
     let hunks = parse_unified_diff(patch_content)?;
 
     if hunks.is_empty() {
+        warn!("No valid hunks found in patch");
         return Err("No valid hunks found in patch".to_string());
     }
+
+    debug!(hunk_count = hunks.len(), "Parsed patch hunks");
 
     let mut results = Vec::new();
 
@@ -58,6 +65,7 @@ pub fn exec_apply_patch(args: &Value, workspace_dir: &Path) -> Result<String, St
         let new_content = lines.join("\n");
 
         if dry_run {
+            debug!(file = %file_path, hunks = file_hunks.len(), "Dry run successful");
             results.push(format!(
                 "✓ {} (dry run, {} hunks valid)",
                 file_path,
@@ -73,6 +81,7 @@ pub fn exec_apply_patch(args: &Value, workspace_dir: &Path) -> Result<String, St
             std::fs::write(&full_path, new_content)
                 .map_err(|e| format!("Failed to write {}: {}", file_path, e))?;
 
+            debug!(file = %file_path, hunks = file_hunks.len(), "Patch applied");
             results.push(format!(
                 "✓ {} ({} hunks applied)",
                 file_path,
