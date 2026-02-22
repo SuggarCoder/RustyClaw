@@ -3,6 +3,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::Rng;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use tracing::debug;
 
 pub const DEFAULT_CSRF_TTL: Duration = Duration::from_secs(60 * 60);
 
@@ -31,12 +32,15 @@ impl CsrfStore {
         self.prune_expired();
         let token = generate_token();
         self.issued.insert(token.clone(), Instant::now());
+        debug!(active_tokens = self.issued.len(), "Issued new CSRF token");
         token
     }
 
     pub fn validate(&mut self, token: &str) -> bool {
         self.prune_expired();
-        self.issued.contains_key(token)
+        let valid = self.issued.contains_key(token);
+        debug!(valid, "CSRF token validation");
+        valid
     }
 
     fn prune_expired(&mut self) {

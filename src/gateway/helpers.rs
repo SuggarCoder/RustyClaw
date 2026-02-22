@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
+use tracing::debug;
 use url::Url;
 
 use super::protocol::types::ChatMessage;
@@ -10,49 +11,36 @@ use super::protocol::types::ChatMessage;
 /// Conservative defaults — these are *input* token limits.
 pub fn context_window_for_model(model: &str) -> usize {
     let m = model.to_lowercase();
-    // Anthropic
-    if m.contains("claude-opus") {
-        return 200_000;
-    }
-    if m.contains("claude-sonnet") {
-        return 200_000;
-    }
-    if m.contains("claude-haiku") {
-        return 200_000;
-    }
-    // OpenAI
-    if m.starts_with("gpt-4.1") {
-        return 1_000_000;
-    }
-    if m.starts_with("o3") || m.starts_with("o4") {
-        return 200_000;
-    }
-    // Google Gemini
-    if m.contains("gemini-2.5-pro") {
-        return 1_000_000;
-    }
-    if m.contains("gemini-2.5-flash") {
-        return 1_000_000;
-    }
-    if m.contains("gemini-2.0-flash") {
-        return 1_000_000;
-    }
-    // xAI
-    if m.contains("grok-3") {
-        return 131_072;
-    }
-    // Ollama / unknown — conservative
-    if m.contains("llama") {
-        return 128_000;
-    }
-    if m.contains("mistral") {
-        return 128_000;
-    }
-    if m.contains("deepseek") {
-        return 128_000;
-    }
-    // Fallback: 128k is a safe default for modern models
-    128_000
+    let window = if m.contains("claude-opus") {
+        200_000
+    } else if m.contains("claude-sonnet") {
+        200_000
+    } else if m.contains("claude-haiku") {
+        200_000
+    } else if m.starts_with("gpt-4.1") {
+        1_000_000
+    } else if m.starts_with("o3") || m.starts_with("o4") {
+        200_000
+    } else if m.contains("gemini-2.5-pro") {
+        1_000_000
+    } else if m.contains("gemini-2.5-flash") {
+        1_000_000
+    } else if m.contains("gemini-2.0-flash") {
+        1_000_000
+    } else if m.contains("grok-3") {
+        131_072
+    } else if m.contains("llama") {
+        128_000
+    } else if m.contains("mistral") {
+        128_000
+    } else if m.contains("deepseek") {
+        128_000
+    } else {
+        // Fallback: 128k is a safe default for modern models
+        128_000
+    };
+    debug!(model, window, "Context window for model");
+    window
 }
 
 /// Fast token estimate: roughly 1 token ≈ 4 characters for English text.
@@ -78,12 +66,16 @@ pub fn resolve_listen_addr(listen: &str) -> Result<SocketAddr> {
             .port_or_known_default()
             .context("WebSocket URL missing port")?;
         let addr = format!("{}:{}", host, port);
-        return addr
+        let socket_addr: SocketAddr = addr
             .parse()
-            .with_context(|| format!("Invalid listen address {}", addr));
+            .with_context(|| format!("Invalid listen address {}", addr))?;
+        debug!(%socket_addr, "Resolved WebSocket URL to address");
+        return Ok(socket_addr);
     }
 
-    trimmed
+    let socket_addr: SocketAddr = trimmed
         .parse()
-        .with_context(|| format!("Invalid listen address {}", trimmed))
+        .with_context(|| format!("Invalid listen address {}", trimmed))?;
+    debug!(%socket_addr, "Resolved listen address");
+    Ok(socket_addr)
 }

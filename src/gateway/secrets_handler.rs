@@ -1,3 +1,5 @@
+use tracing::{debug, warn, instrument};
+
 use crate::secrets::{AccessContext, AccessPolicy, CredentialValue, SecretEntry, SecretKind};
 
 use super::SharedVault;
@@ -18,28 +20,36 @@ use super::SharedVault;
 /// - `WithApproval` credentials are only readable if `agent_access_enabled`
 ///   is set in config.
 /// - `WithAuth` and `SkillOnly` credentials are denied.
+#[instrument(skip(args, vault), fields(%name))]
 pub async fn execute_secrets_tool(
     name: &str,
     args: &serde_json::Value,
     vault: &SharedVault,
 ) -> Result<String, String> {
+    debug!("Executing secrets tool");
     match name {
         "secrets_list" => exec_secrets_list(vault).await,
         "secrets_get" => exec_secrets_get(args, vault).await,
         "secrets_store" => exec_secrets_store(args, vault).await,
-        _ => Err(format!("Unknown secrets tool: {}", name)),
+        _ => {
+            warn!("Unknown secrets tool requested");
+            Err(format!("Unknown secrets tool: {}", name))
+        }
     }
 }
 
 /// List all credentials in the vault (names, kinds, policies — no values).
+#[instrument(skip(vault))]
 pub async fn exec_secrets_list(vault: &SharedVault) -> Result<String, String> {
     let mut mgr = vault.lock().await;
     let entries = mgr.list_all_entries();
 
     if entries.is_empty() {
+        debug!("Vault is empty");
         return Ok("No credentials stored in the vault.".into());
     }
 
+    debug!(count = entries.len(), "Listing vault credentials");
     let mut lines = Vec::with_capacity(entries.len() + 1);
     lines.push(format!("{} credential(s) in vault:\n", entries.len()));
 
@@ -60,6 +70,7 @@ pub async fn exec_secrets_list(vault: &SharedVault) -> Result<String, String> {
 }
 
 /// Retrieve a single credential value from the vault.
+#[instrument(skip(args, vault))]
 pub async fn exec_secrets_get(
     args: &serde_json::Value,
     vault: &SharedVault,
@@ -68,6 +79,8 @@ pub async fn exec_secrets_get(
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: name".to_string())?;
+
+    debug!(credential = cred_name, "Retrieving credential");
 
     let ctx = AccessContext {
         user_approved: false,
@@ -78,13 +91,20 @@ pub async fn exec_secrets_get(
     let mut mgr = vault.lock().await;
     match mgr.get_credential(cred_name, &ctx) {
         Ok(Some((entry, value))) => {
+            debug!(credential = cred_name, "Credential retrieved successfully");
             Ok(format_credential_value(cred_name, &entry, &value))
         }
-        Ok(None) => Err(format!(
-            "Credential '{}' not found. Use secrets_list to see available credentials.",
-            cred_name,
-        )),
-        Err(e) => Err(e.to_string()),
+        Ok(None) => {
+            debug!(credential = cred_name, "Credential not found");
+            Err(format!(
+                "Credential '{}' not found. Use secrets_list to see available credentials.",
+                cred_name,
+            ))
+        }
+        Err(e) => {
+            warn!(credential = cred_name, error = %e, "Credential access denied");
+            Err(e.to_string())
+        }
     }
 }
 
@@ -140,6 +160,7 @@ pub fn format_credential_value(
 }
 
 /// Store a new credential in the vault.
+#[instrument(skip(args, vault))]
 pub async fn exec_secrets_store(
     args: &serde_json::Value,
     vault: &SharedVault,
@@ -166,6 +187,8 @@ pub async fn exec_secrets_store(
 
     let username = args.get("username").and_then(|v| v.as_str());
 
+    debug!(credential = cred_name, kind = kind_str, "Storing credential");
+
     let kind = match kind_str {
         "api_key" => SecretKind::ApiKey,
         "token" => SecretKind::Token,
@@ -177,6 +200,7 @@ pub async fn exec_secrets_store(
         "payment_method" => SecretKind::PaymentMethod,
         "other" => SecretKind::Other,
         _ => {
+            warn!(kind = kind_str, "Unknown credential kind");
             return Err(format!(
                 "Unknown credential kind: '{}'. Use one of: api_key, token, \
                  username_password, ssh_key, secure_note, http_passkey, \
@@ -202,8 +226,12 @@ pub async fn exec_secrets_store(
 
     let mut mgr = vault.lock().await;
     mgr.store_credential(cred_name, &entry, value, username)
-        .map_err(|e| format!("Failed to store credential: {}", e))?;
+        .map_err(|e| {
+            warn!(credential = cred_name, error = %e, "Failed to store credential");
+            format!("Failed to store credential: {}", e)
+        })?;
 
+    debug!(credential = cred_name, "Credential stored successfully");
     Ok(format!(
         "Credential '{}' stored successfully (kind: {}, policy: {}).",
         cred_name, entry.kind, entry.policy,
