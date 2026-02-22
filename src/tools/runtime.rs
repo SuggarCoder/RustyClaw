@@ -9,13 +9,18 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
+use tracing::{debug, warn, instrument};
 
 /// Execute a shell command with background support and optional sandboxing.
+#[instrument(skip(args, workspace_dir), fields(command))]
 pub fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let command = args
         .get("command")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: command".to_string())?;
+
+    tracing::Span::current().record("command", &command[..command.len().min(100)]);
+
     let working_dir = args.get("working_dir").and_then(|v| v.as_str());
     let timeout_secs = args
         .get("timeout_secs")
@@ -37,11 +42,15 @@ pub fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String
         None => workspace_dir.to_path_buf(),
     };
 
+    debug!(cwd = %cwd.display(), timeout_secs, background, yield_ms, "Executing command");
+
     // Block commands that reference the credentials directory.
     if command_references_credentials(command) {
+        warn!("Command references credentials directory");
         return Err(VAULT_ACCESS_DENIED.to_string());
     }
     if is_protected_path(&cwd) {
+        warn!(cwd = %cwd.display(), "Working directory is protected");
         return Err(VAULT_ACCESS_DENIED.to_string());
     }
 
@@ -49,12 +58,14 @@ pub fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String
     // Note: Background processes can't be fully sandboxed (we need the child handle)
     // but we still do path validation checks above.
     if background {
+        debug!("Spawning background process");
         let manager = process_manager();
         let mut mgr = manager
             .lock()
             .map_err(|_| "Failed to acquire process manager lock".to_string())?;
 
         let session_id = mgr.spawn(command, cwd.to_string_lossy().as_ref(), Some(timeout_secs))?;
+        debug!(session_id = %session_id, "Background process spawned");
 
         return Ok(json!({
             "status": "running",
@@ -95,6 +106,7 @@ pub fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String
 
                 // Check if we should auto-background
                 if now >= yield_deadline {
+                    debug!(yield_ms, "Auto-backgrounding long-running process");
                     // Move to background - transfer child to process manager
                     let manager = process_manager();
                     let mut mgr = manager
@@ -115,6 +127,7 @@ pub fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String
 
                     // Insert session into manager
                     let session_id = mgr.insert(session);
+                    debug!(session_id = %session_id, "Process moved to background");
 
                     return Ok(json!({
                         "status": "running",
@@ -130,6 +143,7 @@ pub fn exec_execute_command(args: &Value, workspace_dir: &Path) -> Result<String
 
                 // Check timeout
                 if now >= timeout_deadline {
+                    warn!(timeout_secs, "Command timed out");
                     let _ = child.kill();
                     return Err(format!("Command timed out after {} seconds", timeout_secs));
                 }
@@ -183,13 +197,18 @@ fn format_output(output: std::process::Output, _timeout_secs: u64) -> Result<Str
 }
 
 /// Manage background exec sessions.
+#[instrument(skip(args, _workspace_dir), fields(action))]
 pub fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     let action = args
         .get("action")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: action".to_string())?;
 
+    tracing::Span::current().record("action", action);
+
     let session_id = args.get("sessionId").and_then(|v| v.as_str());
+
+    debug!(session_id, "Processing exec session action");
 
     let manager = process_manager();
     let mut mgr = manager
@@ -329,11 +348,13 @@ pub fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, Strin
                 .ok_or_else(|| format!("No session found: {}", id))?;
 
             session.kill()?;
+            debug!(session_id = id, "Session killed");
             Ok(format!("Killed session {}", id))
         }
 
         "clear" => {
             mgr.clear_completed();
+            debug!("Cleared completed sessions");
             Ok("Cleared completed sessions.".to_string())
         }
 
@@ -345,15 +366,19 @@ pub fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, Strin
                 if session.status == SessionStatus::Running {
                     let _ = session.kill();
                 }
+                debug!(session_id = id, "Session removed");
                 Ok(format!("Removed session {}", id))
             } else {
                 Err(format!("No session found: {}", id))
             }
         }
 
-        _ => Err(format!(
-            "Unknown action: {}. Valid: list, poll, log, write, send_keys, kill, clear, remove",
-            action
-        )),
+        _ => {
+            warn!(action, "Unknown process action");
+            Err(format!(
+                "Unknown action: {}. Valid: list, poll, log, write, send_keys, kill, clear, remove",
+                action
+            ))
+        }
     }
 }

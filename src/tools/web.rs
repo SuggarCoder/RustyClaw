@@ -4,17 +4,21 @@ use super::helpers::vault;
 use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
+use tracing::{debug, warn, instrument};
 
 /// Fetch a URL and extract readable content as markdown or plain text.
 ///
 /// When `use_cookies` is true, automatically:
 /// - Attaches stored cookies matching the request domain
 /// - Stores any Set-Cookie headers from the response
+#[instrument(skip(args, _workspace_dir), fields(url))]
 pub fn exec_web_fetch(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     let url = args
         .get("url")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: url".to_string())?;
+
+    tracing::Span::current().record("url", url);
 
     let extract_mode = args
         .get("extract_mode")
@@ -31,6 +35,8 @@ pub fn exec_web_fetch(args: &Value, _workspace_dir: &Path) -> Result<String, Str
         .get("use_cookies")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    debug!(extract_mode, max_chars, use_cookies, "Fetching URL");
 
     // Validate URL
     if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -68,9 +74,13 @@ pub fn exec_web_fetch(args: &Value, _workspace_dir: &Path) -> Result<String, Str
 
     let response = request
         .send()
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
+        .map_err(|e| {
+            warn!(error = %e, "HTTP request failed");
+            format!("HTTP request failed: {}", e)
+        })?;
 
     let status = response.status();
+    debug!(status = status.as_u16(), "Received HTTP response");
 
     // Store Set-Cookie headers before consuming the response
     if use_cookies {
@@ -291,11 +301,14 @@ fn html_to_text(html: &str) -> String {
 }
 
 /// Search the web using Brave Search API.
+#[instrument(skip(args, _workspace_dir), fields(query))]
 pub fn exec_web_search(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: query".to_string())?;
+
+    tracing::Span::current().record("query", query);
 
     let count = args
         .get("count")
@@ -312,8 +325,11 @@ pub fn exec_web_search(args: &Value, _workspace_dir: &Path) -> Result<String, St
     let search_lang = args.get("search_lang").and_then(|v| v.as_str());
     let freshness = args.get("freshness").and_then(|v| v.as_str());
 
+    debug!(count, country, "Searching with Brave API");
+
     // Get API key from environment
     let api_key = std::env::var("BRAVE_API_KEY").map_err(|_| {
+        warn!("BRAVE_API_KEY environment variable not set");
         "BRAVE_API_KEY environment variable not set. \
          Get a free API key at https://brave.com/search/api/"
             .to_string()
@@ -355,6 +371,7 @@ pub fn exec_web_search(args: &Value, _workspace_dir: &Path) -> Result<String, St
     let status = response.status();
     if !status.is_success() {
         let body = response.text().unwrap_or_default();
+        warn!(status = status.as_u16(), "Brave Search API error");
         return Err(format!(
             "Brave Search API error {}: {}",
             status.as_u16(),
@@ -373,12 +390,16 @@ pub fn exec_web_search(args: &Value, _workspace_dir: &Path) -> Result<String, St
         .and_then(|r| r.as_array());
 
     let Some(results) = web_results else {
+        debug!("No results found");
         return Ok("No results found.".to_string());
     };
 
     if results.is_empty() {
+        debug!("Empty results array");
         return Ok("No results found.".to_string());
     }
+
+    debug!(result_count = results.len(), "Search complete");
 
     // Format results
     let mut output = String::new();
