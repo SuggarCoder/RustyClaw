@@ -57,22 +57,22 @@ impl MemoryIndex {
     /// Index all memory files in a workspace.
     pub fn index_workspace(workspace: &Path) -> Result<Self, String> {
         let mut index = Self::new();
-        
+
         // Index MEMORY.md if it exists
         let memory_md = workspace.join("MEMORY.md");
         if memory_md.exists() {
             index.index_file(&memory_md, "MEMORY.md")?;
         }
-        
+
         // Index memory/*.md
         let memory_dir = workspace.join("memory");
         if memory_dir.exists() && memory_dir.is_dir() {
             index.index_directory(&memory_dir, "memory")?;
         }
-        
+
         // Build inverted index
         index.build_inverted_index();
-        
+
         Ok(index)
     }
 
@@ -80,12 +80,12 @@ impl MemoryIndex {
     fn index_file(&mut self, path: &Path, relative_path: &str) -> Result<(), String> {
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read {}: {}", relative_path, e))?;
-        
+
         // Split into chunks (~400 tokens target, roughly 300-400 words)
         // For simplicity, we chunk by paragraphs or heading sections
         let chunks = self.chunk_content(&content, relative_path);
         self.chunks.extend(chunks);
-        
+
         Ok(())
     }
 
@@ -93,19 +93,19 @@ impl MemoryIndex {
     fn index_directory(&mut self, dir: &Path, relative_prefix: &str) -> Result<(), String> {
         let entries = fs::read_dir(dir)
             .map_err(|e| format!("Failed to read directory {}: {}", relative_prefix, e))?;
-        
+
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             let relative = format!("{}/{}", relative_prefix, name);
-            
+
             if path.is_file() && name.ends_with(".md") {
                 self.index_file(&path, &relative)?;
             } else if path.is_dir() && !name.starts_with('.') {
                 self.index_directory(&path, &relative)?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -113,22 +113,22 @@ impl MemoryIndex {
     fn chunk_content(&self, content: &str, path: &str) -> Vec<MemoryChunk> {
         let mut chunks = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
-        
+
         if lines.is_empty() {
             return chunks;
         }
-        
+
         // Chunk by sections (## headings) or every ~20 lines
         let mut current_chunk = String::new();
         let mut chunk_start = 1;
         let mut line_count = 0;
-        
+
         for (i, line) in lines.iter().enumerate() {
             let line_num = i + 1;
-            
+
             // Check if this is a heading that should start a new chunk
             let is_heading = line.starts_with("## ") || line.starts_with("# ");
-            
+
             // Start new chunk on heading or every ~20 lines (if we have content)
             if (is_heading || line_count >= 20) && !current_chunk.trim().is_empty() {
                 chunks.push(MemoryChunk {
@@ -141,12 +141,12 @@ impl MemoryIndex {
                 chunk_start = line_num;
                 line_count = 0;
             }
-            
+
             current_chunk.push_str(line);
             current_chunk.push('\n');
             line_count += 1;
         }
-        
+
         // Don't forget the last chunk
         if !current_chunk.trim().is_empty() {
             chunks.push(MemoryChunk {
@@ -156,7 +156,7 @@ impl MemoryIndex {
                 text: current_chunk.trim().to_string(),
             });
         }
-        
+
         chunks
     }
 
@@ -165,17 +165,17 @@ impl MemoryIndex {
         self.term_index.clear();
         self.doc_freq.clear();
         self.total_docs = self.chunks.len();
-        
+
         for (idx, chunk) in self.chunks.iter().enumerate() {
             let terms = tokenize(&chunk.text);
             let unique_terms: std::collections::HashSet<_> = terms.iter().collect();
-            
+
             for term in unique_terms {
                 self.term_index
                     .entry(term.clone())
                     .or_default()
                     .push(idx);
-                
+
                 *self.doc_freq.entry(term.clone()).or_insert(0) += 1;
             }
         }
@@ -184,24 +184,24 @@ impl MemoryIndex {
     /// Search the index using BM25-style scoring.
     pub fn search(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
         let query_terms = tokenize(query);
-        
+
         if query_terms.is_empty() || self.chunks.is_empty() {
             return Vec::new();
         }
-        
+
         // Score each chunk
         let mut scores: Vec<(usize, f64)> = Vec::new();
-        
+
         for (idx, _chunk) in self.chunks.iter().enumerate() {
             let score = self.bm25_score(idx, &query_terms);
             if score > 0.0 {
                 scores.push((idx, score));
             }
         }
-        
+
         // Sort by score descending
         scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         // Return top results
         scores
             .into_iter()
@@ -217,33 +217,33 @@ impl MemoryIndex {
     fn bm25_score(&self, chunk_idx: usize, query_terms: &[String]) -> f64 {
         const K1: f64 = 1.2;
         const B: f64 = 0.75;
-        
+
         let chunk = &self.chunks[chunk_idx];
         let chunk_terms = tokenize(&chunk.text);
         let doc_len = chunk_terms.len() as f64;
-        
+
         // Calculate average document length
         let avg_doc_len = self.chunks.iter()
             .map(|c| tokenize(&c.text).len())
             .sum::<usize>() as f64 / self.total_docs.max(1) as f64;
-        
+
         let mut score = 0.0;
-        
+
         for term in query_terms {
             let tf = chunk_terms.iter().filter(|t| *t == term).count() as f64;
             let df = *self.doc_freq.get(term).unwrap_or(&0) as f64;
-            
+
             if tf > 0.0 && df > 0.0 {
                 // IDF component
                 let idf = ((self.total_docs as f64 - df + 0.5) / (df + 0.5) + 1.0).ln();
-                
+
                 // TF component with length normalization
                 let tf_norm = (tf * (K1 + 1.0)) / (tf + K1 * (1.0 - B + B * (doc_len / avg_doc_len)));
-                
+
                 score += idf * tf_norm;
             }
         }
-        
+
         score
     }
 
@@ -361,30 +361,30 @@ pub fn read_memory_file(
             relative_path
         ));
     }
-    
+
     let full_path = workspace.join(relative_path);
-    
+
     if !full_path.exists() {
         return Err(format!("Memory file not found: {}", relative_path));
     }
-    
+
     let content = fs::read_to_string(&full_path)
         .map_err(|e| format!("Failed to read {}: {}", relative_path, e))?;
-    
+
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
-    
+
     // Handle line range
     let start = from_line.unwrap_or(1).saturating_sub(1); // Convert to 0-indexed
     let count = num_lines.unwrap_or(total_lines);
-    
+
     if start >= total_lines {
         return Ok(String::new());
     }
-    
+
     let end = (start + count).min(total_lines);
     let selected: Vec<&str> = lines[start..end].to_vec();
-    
+
     Ok(selected.join("\n"))
 }
 
@@ -394,7 +394,7 @@ fn is_valid_memory_path(path: &str) -> bool {
     if path == "MEMORY.md" {
         return true;
     }
-    
+
     if path.starts_with("memory/") && path.ends_with(".md") {
         // Check for path traversal
         !path.contains("..") && !path.contains("//")
@@ -411,22 +411,22 @@ mod tests {
 
     fn setup_test_workspace() -> TempDir {
         let dir = TempDir::new().unwrap();
-        
+
         // Create MEMORY.md
         fs::write(
             dir.path().join("MEMORY.md"),
             "# Long-term Memory\n\n## Preferences\nUser prefers dark mode.\nFavorite color is blue.\n\n## Projects\nWorking on RustyClaw.\n"
         ).unwrap();
-        
+
         // Create memory directory
         fs::create_dir(dir.path().join("memory")).unwrap();
-        
+
         // Create daily note
         fs::write(
             dir.path().join("memory/2026-02-12.md"),
             "# 2026-02-12\n\n## Morning\nStarted implementing memory tools.\n\n## Afternoon\nWorking on BM25 search.\n"
         ).unwrap();
-        
+
         dir
     }
 
@@ -434,7 +434,7 @@ mod tests {
     fn test_index_workspace() {
         let workspace = setup_test_workspace();
         let index = MemoryIndex::index_workspace(workspace.path()).unwrap();
-        
+
         assert!(!index.chunks.is_empty());
         assert!(index.total_docs > 0);
     }
@@ -443,7 +443,7 @@ mod tests {
     fn test_search_finds_relevant() {
         let workspace = setup_test_workspace();
         let index = MemoryIndex::index_workspace(workspace.path()).unwrap();
-        
+
         let results = index.search("dark mode", 5);
         assert!(!results.is_empty());
         assert!(results[0].chunk.text.contains("dark mode"));
@@ -453,7 +453,7 @@ mod tests {
     fn test_search_empty_query() {
         let workspace = setup_test_workspace();
         let index = MemoryIndex::index_workspace(workspace.path()).unwrap();
-        
+
         let results = index.search("", 5);
         assert!(results.is_empty());
     }
@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn test_read_memory_file() {
         let workspace = setup_test_workspace();
-        
+
         let content = read_memory_file(workspace.path(), "MEMORY.md", None, None).unwrap();
         assert!(content.contains("Long-term Memory"));
     }
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn test_read_memory_file_with_range() {
         let workspace = setup_test_workspace();
-        
+
         let content = read_memory_file(workspace.path(), "MEMORY.md", Some(3), Some(2)).unwrap();
         // Line 3-4 should be "## Preferences" and the next line
         assert!(!content.is_empty());
@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn test_read_memory_file_invalid_path() {
         let workspace = setup_test_workspace();
-        
+
         let result = read_memory_file(workspace.path(), "../etc/passwd", None, None);
         assert!(result.is_err());
     }
@@ -488,7 +488,7 @@ mod tests {
         assert!(is_valid_memory_path("MEMORY.md"));
         assert!(is_valid_memory_path("memory/2026-02-12.md"));
         assert!(is_valid_memory_path("memory/notes/work.md"));
-        
+
         assert!(!is_valid_memory_path("../secret.md"));
         assert!(!is_valid_memory_path("memory/../../../etc/passwd"));
         assert!(!is_valid_memory_path("src/main.rs"));
@@ -509,7 +509,7 @@ mod tests {
     fn test_search_with_decay() {
         let workspace = setup_test_workspace();
         let index = MemoryIndex::index_workspace(workspace.path()).unwrap();
-        
+
         // Search with recency weighting (30 day half-life)
         let results = index.search_with_decay("memory tools", 5, 30.0);
         assert!(!results.is_empty());
@@ -527,21 +527,21 @@ mod tests {
     #[test]
     fn test_extract_age_days() {
         use chrono::NaiveDate;
-        
+
         let today = NaiveDate::from_ymd_opt(2026, 2, 20).unwrap();
-        
+
         // File from 5 days ago
         let age = MemoryIndex::extract_age_days("memory/2026-02-15.md", today);
         assert_eq!(age, 5);
-        
+
         // File from today
         let age = MemoryIndex::extract_age_days("memory/2026-02-20.md", today);
         assert_eq!(age, 0);
-        
+
         // File with non-date name
         let age = MemoryIndex::extract_age_days("memory/notes.md", today);
         assert_eq!(age, 0);
-        
+
         // Nested path with date
         let age = MemoryIndex::extract_age_days("memory/project/2026-02-10.md", today);
         assert_eq!(age, 10);
@@ -552,21 +552,21 @@ mod tests {
         // Create workspace with files from different dates
         let dir = TempDir::new().unwrap();
         fs::create_dir(dir.path().join("memory")).unwrap();
-        
+
         // Old file with the search term
         fs::write(
             dir.path().join("memory/2026-01-01.md"),
             "# Old Note\nThis contains important search term.\n"
         ).unwrap();
-        
+
         // Recent file with the search term
         fs::write(
             dir.path().join("memory/2026-02-19.md"),
             "# Recent Note\nThis also contains important search term.\n"
         ).unwrap();
-        
+
         let index = MemoryIndex::index_workspace(dir.path()).unwrap();
-        
+
         // With recency weighting, recent file should rank higher
         let results = index.search_with_decay("important search term", 2, 30.0);
         assert_eq!(results.len(), 2);
@@ -574,4 +574,3 @@ mod tests {
         assert!(results[0].chunk.path.contains("2026-02"));
     }
 }
-

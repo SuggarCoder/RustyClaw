@@ -804,6 +804,22 @@ impl App {
             | Action::SecretsRemoveTotpResult { .. } => {
                 return self.handle_action(action).await;
             }
+            Action::ToolCommandDone { message, is_error } => {
+                self.state.loading_line = None;
+                // Split multi-line results into separate messages so
+                // each line renders on its own row in the TUI.
+                for line in message.lines() {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    if *is_error {
+                        self.state.messages.push(DisplayMessage::error(line));
+                    } else {
+                        self.state.messages.push(DisplayMessage::info(line));
+                    }
+                }
+                return Ok(Some(Action::Update));
+            }
             _ => {}
         }
 
@@ -836,6 +852,12 @@ impl App {
         }
 
         if text.starts_with('/') {
+            // ── Intercept long-running tool commands and run them in a
+            //    background thread so the TUI stays responsive. ──────────
+            if let Some(follow) = self.maybe_spawn_tool_command(&text) {
+                return Ok(follow);
+            }
+
             let mut context = CommandContext {
                 secrets_manager: &mut self.state.secrets_manager,
                 skill_manager: &mut self.state.skill_manager,
@@ -993,6 +1015,149 @@ impl App {
                 .push(DisplayMessage::warning("Gateway not connected — use /gateway start"));
             Ok(Some(Action::Update))
         }
+    }
+
+    /// If `text` is one of the long-running tool slash-commands
+    /// (`/exo`, `/ollama`, `/uv`, `/npm`, `/agent setup`), spawn the work
+    /// on a background thread so the TUI remains responsive.
+    ///
+    /// Returns `Some(..)` when the command was intercepted (caller should
+    /// return early), or `None` to let the normal synchronous path handle it.
+    fn maybe_spawn_tool_command(&mut self, text: &str) -> Option<Option<Action>> {
+        let trimmed = text.trim().trim_start_matches('/');
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        // Build the label shown while running, and the closure that does the
+        // actual (blocking) work.  Each closure returns Result<String, String>.
+        let ws_dir = self.state.config.workspace_dir();
+        let cmd = parts[0];
+
+        type ToolFn = Box<dyn FnOnce() -> Result<String, String> + Send + 'static>;
+
+        let (label, work): (String, ToolFn) = match cmd {
+            "agent" if parts.get(1) == Some(&"setup") => {
+                let d = ws_dir.clone();
+                (
+                    "agent setup".into(),
+                    Box::new(move || {
+                        crate::tools::agent_setup::exec_agent_setup(
+                            &serde_json::json!({}),
+                            &d,
+                        )
+                    }),
+                )
+            }
+            "exo" => {
+                let action = parts.get(1).copied().unwrap_or("status").to_string();
+                let model = parts.get(2).map(|s| s.to_string());
+                let d = ws_dir.clone();
+                let lbl = format!("exo {}", action);
+                (
+                    lbl,
+                    Box::new(move || {
+                        let mut args = serde_json::json!({"action": action});
+                        if let Some(m) = model {
+                            args["model"] = serde_json::json!(m);
+                        }
+                        crate::tools::exo_ai::exec_exo_manage(&args, &d)
+                    }),
+                )
+            }
+            "ollama" => {
+                let action = parts.get(1).copied().unwrap_or("status").to_string();
+                let model = parts.get(2).map(|s| s.to_string());
+                let dest = parts.get(3).map(|s| s.to_string());
+                let d = ws_dir.clone();
+                let lbl = format!("ollama {}", action);
+                (
+                    lbl,
+                    Box::new(move || {
+                        let mut args = serde_json::json!({"action": action});
+                        if let Some(m) = model {
+                            args["model"] = serde_json::json!(m);
+                        }
+                        if let Some(dst) = dest {
+                            args["destination"] = serde_json::json!(dst);
+                        }
+                        crate::tools::ollama::exec_ollama_manage(&args, &d)
+                    }),
+                )
+            }
+            "uv" => {
+                let action = parts.get(1).copied().unwrap_or("version").to_string();
+                let rest: Vec<String> =
+                    parts.iter().skip(2).map(|s| s.to_string()).collect();
+                let d = ws_dir.clone();
+                let lbl = format!("uv {}", action);
+                (
+                    lbl,
+                    Box::new(move || {
+                        let mut args = serde_json::json!({"action": action});
+                        if rest.len() == 1 {
+                            args["package"] = serde_json::json!(&rest[0]);
+                        } else if rest.len() > 1 {
+                            args["packages"] = serde_json::json!(rest);
+                        }
+                        crate::tools::uv::exec_uv_manage(&args, &d)
+                    }),
+                )
+            }
+            "npm" => {
+                let action = parts.get(1).copied().unwrap_or("status").to_string();
+                let rest: Vec<String> =
+                    parts.iter().skip(2).map(|s| s.to_string()).collect();
+                let d = ws_dir.clone();
+                let lbl = format!("npm {}", action);
+                (
+                    lbl,
+                    Box::new(move || {
+                        let mut args = serde_json::json!({"action": action});
+                        if rest.len() == 1 {
+                            args["package"] = serde_json::json!(&rest[0]);
+                        } else if rest.len() > 1 {
+                            args["packages"] = serde_json::json!(rest);
+                        }
+                        crate::tools::npm::exec_npm_manage(&args, &d)
+                    }),
+                )
+            }
+            _ => return None, // not a tool command — fall through
+        };
+
+        // Show a spinner / status message immediately
+        self.state
+            .messages
+            .push(DisplayMessage::info(format!("Running /{}\u{2026}", label)));
+        self.state.loading_line =
+            Some(format!("  \u{231B} /{}\u{2026}", label));
+
+        // Spawn the blocking work on a background thread
+        let tx = self.action_tx.clone();
+        std::thread::spawn(move || {
+            let result = work();
+            match result {
+                Ok(msg) => {
+                    let _ = tx.send(Action::ToolCommandDone {
+                        message: msg,
+                        is_error: false,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(Action::ToolCommandDone {
+                        message: e,
+                        is_error: true,
+                    });
+                }
+            }
+        });
+
+        Some(Some(Action::TimedStatusLine(
+            format!("/{}", label),
+            3,
+        )))
     }
 
     pub fn history_path(config: &Config) -> std::path::PathBuf {

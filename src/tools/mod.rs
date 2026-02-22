@@ -24,10 +24,14 @@ mod secrets_tools;
 mod system_tools;
 mod sysadmin;
 pub mod exo_ai;
+pub mod npm;
 pub mod ollama;
 pub mod uv;
 // UV tool
 use uv::exec_uv_manage;
+
+// npm / Node.js tool
+use npm::exec_npm_manage;
 
 // Agent setup orchestrator
 use agent_setup::exec_agent_setup;
@@ -242,8 +246,9 @@ pub fn tool_summary(name: &str) -> &'static str {
         "summarize_file" => "Preview-summarize any file type",
         "ask_user" => "Ask the user structured questions",
         "ollama_manage" => "Administer the Ollama model server",
-        "exo_manage" => "Administer the Exo distributed AI cluster",
+        "exo_manage" => "Administer the Exo distributed AI cluster (git clone + uv run)",
         "uv_manage" => "Manage Python envs & packages via uv",
+        "npm_manage" => "Manage Node.js packages & scripts via npm",
         "agent_setup" => "Set up local model infrastructure",
         _ => "Unknown tool",
     }
@@ -335,6 +340,7 @@ pub fn all_tools() -> Vec<&'static ToolDef> {
         &OLLAMA_MANAGE,
         &EXO_MANAGE,
         &UV_MANAGE,
+        &NPM_MANAGE,
         &AGENT_SETUP,
         &ASK_USER,
     ]
@@ -865,11 +871,14 @@ pub static OLLAMA_MANAGE: ToolDef = ToolDef {
 
 pub static EXO_MANAGE: ToolDef = ToolDef {
     name: "exo_manage",
-    description: "Administer the Exo distributed AI inference cluster. Actions: \
-                  setup (install exo via pip/uv), start/run (launch a cluster node), \
-                  stop, status (installation & topology), topology/peers (view \
-                  cluster members), models/list (available models), download/pull \
-                  (pre-download a model), remove/rm (delete cached model).",
+    description: "Administer the Exo distributed AI inference cluster (exo-explore/exo). \
+                  Actions: setup (clone repo, install prereqs, build dashboard), \
+                  start/run (launch exo node), stop, status (cluster overview with download \
+                  progress), models/list (available models), state/topology (cluster nodes, \
+                  instances & downloads), downloads/progress (show model download status with \
+                  progress bars), preview (placement previews for a model), load/add/pull \
+                  (create model instance / start download), unload/remove (delete instance), \
+                  update (git pull + rebuild), log (view logs).",
     parameters: vec![],
     execute: exec_exo_manage,
 };
@@ -884,6 +893,18 @@ pub static UV_MANAGE: ToolDef = ToolDef {
                   (install a Python version), init (create new project).",
     parameters: vec![],
     execute: exec_uv_manage,
+};
+
+pub static NPM_MANAGE: ToolDef = ToolDef {
+    name: "npm_manage",
+    description: "Manage Node.js packages and scripts via npm. Actions: setup \
+                  (install Node.js/npm), version, init (create package.json), \
+                  npm-install/add (install packages), uninstall/remove, list, \
+                  outdated, update, run (run a script), start, build, test, \
+                  npx/exec (run a package binary), audit, cache-clean, info, \
+                  search, status.",
+    parameters: vec![],
+    execute: exec_npm_manage,
 };
 
 pub static AGENT_SETUP: ToolDef = ToolDef {
@@ -1005,6 +1026,7 @@ fn resolve_params(tool: &ToolDef) -> Vec<ToolParam> {
         "ollama_manage" => ollama_manage_params(),
         "exo_manage" => exo_manage_params(),
         "uv_manage" => uv_manage_params(),
+        "npm_manage" => npm_manage_params(),
         "agent_setup" => agent_setup_params(),
         _ => vec![],
     }

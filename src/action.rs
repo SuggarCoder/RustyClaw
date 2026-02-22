@@ -211,5 +211,10 @@ pub enum Action {
     UserPromptRequest(crate::dialogs::user_prompt::UserPrompt),
     /// User responded to a structured prompt
     UserPromptResponse(crate::dialogs::user_prompt::UserPromptResponse),
+    /// A long-running slash-command tool finished (msg, is_error)
+    ToolCommandDone {
+        message: String,
+        is_error: bool,
+    },
     Noop,
 }

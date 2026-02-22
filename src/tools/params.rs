@@ -1448,15 +1448,21 @@ pub fn exo_manage_params() -> Vec<ToolParam> {
         ToolParam {
             name: "action".into(),
             description: "Action to perform: 'setup', 'start', 'stop', 'status', \
-                          'topology', 'models', 'download', 'remove'."
+                          'models', 'state', 'downloads', 'preview', 'load', 'unload', 'update', 'log'."
                 .into(),
             param_type: "string".into(),
             required: true,
         },
         ToolParam {
             name: "model".into(),
-            description: "Model name for download/remove/start \
-                          (e.g. 'llama-3.1-8b', 'mistral-7b').".into(),
+            description: "Model short ID for load/preview/unload \
+                          (e.g. 'llama-3.2-1b', 'Qwen3-30B-A3B-4bit').".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "instance_id".into(),
+            description: "Instance ID for 'unload' action (from /state endpoint).".into(),
             param_type: "string".into(),
             required: false,
         },
@@ -1467,10 +1473,21 @@ pub fn exo_manage_params() -> Vec<ToolParam> {
             required: false,
         },
         ToolParam {
-            name: "discovery".into(),
-            description: "Discovery module for 'start' action \
-                          (e.g. 'udp', 'tailscale', 'manual').".into(),
-            param_type: "string".into(),
+            name: "no_worker".into(),
+            description: "If true, start exo without worker (coordinator-only node).".into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "offline".into(),
+            description: "If true, start in offline/air-gapped mode.".into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "verbose".into(),
+            description: "If true, enable verbose logging for 'start'.".into(),
+            param_type: "boolean".into(),
             required: false,
         },
     ]
@@ -1526,6 +1543,81 @@ pub fn uv_manage_params() -> Vec<ToolParam> {
         ToolParam {
             name: "file".into(),
             description: "Requirements file path for 'sync' action.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+    ]
+}
+
+pub fn npm_manage_params() -> Vec<ToolParam> {
+    vec![
+        ToolParam {
+            name: "action".into(),
+            description: "Action to perform: 'setup', 'version', 'init', 'npm-install', \
+                          'uninstall', 'list', 'outdated', 'update', 'run', 'start', \
+                          'build', 'test', 'npx', 'audit', 'cache-clean', 'info', \
+                          'search', 'status'."
+                .into(),
+            param_type: "string".into(),
+            required: true,
+        },
+        ToolParam {
+            name: "package".into(),
+            description: "Single package name for install/uninstall/update/info.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "packages".into(),
+            description: "Array of package names for install/uninstall.".into(),
+            param_type: "array".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "script".into(),
+            description: "Script name for 'run' action (e.g. 'build', 'dev', 'start').".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "command".into(),
+            description: "Command string for 'npx' action (e.g. 'create-react-app my-app').".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "query".into(),
+            description: "Search query for 'search' action.".into(),
+            param_type: "string".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "dev".into(),
+            description: "Install as devDependency (--save-dev). Default: false.".into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "global".into(),
+            description: "Install/uninstall/list globally (-g). Default: false.".into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "depth".into(),
+            description: "Depth for 'list' action. Default: 0.".into(),
+            param_type: "integer".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "fix".into(),
+            description: "Run 'npm audit fix' instead of just 'npm audit'. Default: false.".into(),
+            param_type: "boolean".into(),
+            required: false,
+        },
+        ToolParam {
+            name: "args".into(),
+            description: "Extra arguments to pass after '--' when running scripts.".into(),
             param_type: "string".into(),
             required: false,
         },

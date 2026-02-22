@@ -96,6 +96,7 @@ pub fn command_names() -> Vec<String> {
         "ollama".into(),
         "exo".into(),
         "uv".into(),
+        "npm".into(),
         "quit".into(),
     ];
     for p in providers::provider_ids() {
@@ -188,6 +189,22 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
                 Err(e) => CommandResponse { messages: vec![format!("uv error: {}", e)], action: CommandAction::None },
             }
         }
+        "npm" => {
+            // /npm <action> [package ...]
+            let action = parts.get(1).copied().unwrap_or("status");
+            let rest: Vec<&str> = parts.iter().skip(2).copied().collect();
+            let mut args = serde_json::json!({"action": action});
+            if rest.len() == 1 {
+                args["package"] = serde_json::json!(rest[0]);
+            } else if rest.len() > 1 {
+                args["packages"] = serde_json::json!(rest);
+            }
+            let ws_dir = context.config.workspace_dir();
+            match crate::tools::npm::exec_npm_manage(&args, &ws_dir) {
+                Ok(msg) => CommandResponse { messages: vec![msg], action: CommandAction::None },
+                Err(e) => CommandResponse { messages: vec![format!("npm error: {}", e)], action: CommandAction::None },
+            }
+        }
         "help" => CommandResponse {
             messages: vec![
                 "Available commands:".to_string(),
@@ -214,6 +231,7 @@ pub fn handle_command(input: &str, context: &mut CommandContext<'_>) -> CommandR
                 "  /ollama <action> [model] - Ollama admin (setup/pull/list/ps/status/…)".to_string(),
                 "  /exo <action> [model]    - Exo cluster admin (setup/start/stop/status/…)".to_string(),
                 "  /uv <action> [pkg …]     - Python/uv admin (setup/pip-install/list/…)".to_string(),
+                "  /npm <action> [pkg …]    - Node.js/npm admin (setup/install/run/build/…)".to_string(),
             ],
             action: CommandAction::None,
         },
