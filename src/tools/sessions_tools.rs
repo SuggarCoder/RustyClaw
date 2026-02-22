@@ -2,8 +2,10 @@
 
 use serde_json::Value;
 use std::path::Path;
+use tracing::{debug, instrument};
 
 /// List sessions.
+#[instrument(skip(args, _workspace_dir))]
 pub fn exec_sessions_list(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     use crate::sessions::*;
 
@@ -16,6 +18,8 @@ pub fn exec_sessions_list(args: &Value, _workspace_dir: &Path) -> Result<String,
         .get("limit")
         .and_then(|v| v.as_u64())
         .unwrap_or(20) as usize;
+
+    debug!(limit, "Listing sessions");
 
     let sessions = mgr.list(None, false, limit);
 
@@ -58,6 +62,7 @@ pub fn exec_sessions_list(args: &Value, _workspace_dir: &Path) -> Result<String,
 }
 
 /// Spawn a sub-agent.
+#[instrument(skip(args, _workspace_dir), fields(task, agent_id))]
 pub fn exec_sessions_spawn(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     use crate::sessions::*;
 
@@ -72,12 +77,17 @@ pub fn exec_sessions_spawn(args: &Value, _workspace_dir: &Path) -> Result<String
         .and_then(|v| v.as_str())
         .unwrap_or("main");
 
+    tracing::Span::current().record("task", &task[..task.len().min(50)]);
+    tracing::Span::current().record("agent_id", agent_id);
+    debug!(label = label.as_deref(), "Spawning sub-agent");
+
     let manager = session_manager();
     let mut mgr = manager
         .lock()
         .map_err(|_| "Failed to acquire session manager lock".to_string())?;
 
     let session_key = mgr.spawn_subagent(agent_id, task, label.clone(), None);
+    debug!(session_key = %session_key, "Sub-agent spawned");
 
     // Get the run_id
     let run_id = mgr
@@ -100,6 +110,7 @@ pub fn exec_sessions_spawn(args: &Value, _workspace_dir: &Path) -> Result<String
 }
 
 /// Send a message to a session.
+#[instrument(skip(args, _workspace_dir))]
 pub fn exec_sessions_send(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     use crate::sessions::*;
 
@@ -110,6 +121,8 @@ pub fn exec_sessions_send(args: &Value, _workspace_dir: &Path) -> Result<String,
 
     let session_key = args.get("sessionKey").and_then(|v| v.as_str());
     let label = args.get("label").and_then(|v| v.as_str());
+
+    debug!(session_key, label, message_len = message.len(), "Sending message to session");
 
     let manager = session_manager();
     let mut mgr = manager
@@ -133,6 +146,7 @@ pub fn exec_sessions_send(args: &Value, _workspace_dir: &Path) -> Result<String,
 }
 
 /// Get session history.
+#[instrument(skip(args, _workspace_dir))]
 pub fn exec_sessions_history(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     use crate::sessions::*;
 
@@ -150,6 +164,8 @@ pub fn exec_sessions_history(args: &Value, _workspace_dir: &Path) -> Result<Stri
         .get("includeTools")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    debug!(session_key, limit, include_tools, "Fetching session history");
 
     let manager = session_manager();
     let mgr = manager
@@ -173,6 +189,7 @@ pub fn exec_sessions_history(args: &Value, _workspace_dir: &Path) -> Result<Stri
 }
 
 /// Get session status.
+#[instrument(skip(args, _workspace_dir))]
 pub fn exec_session_status(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     use crate::sessions::*;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -183,6 +200,7 @@ pub fn exec_session_status(args: &Value, _workspace_dir: &Path) -> Result<String
         .unwrap_or_default();
 
     let session_key = args.get("sessionKey").and_then(|v| v.as_str());
+    debug!(session_key, "Getting session status");
 
     let manager = session_manager();
     let mgr = manager
@@ -219,7 +237,9 @@ pub fn exec_session_status(args: &Value, _workspace_dir: &Path) -> Result<String
 }
 
 /// List available agent IDs.
+#[instrument(skip(_args, workspace_dir))]
 pub fn exec_agents_list(_args: &Value, workspace_dir: &Path) -> Result<String, String> {
+    debug!("Listing available agents");
     let mut agents = vec!["main".to_string()];
 
     // Check for agents directory

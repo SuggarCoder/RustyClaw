@@ -5,13 +5,18 @@ use serde_json::Value;
 use std::path::Path;
 use std::fs;
 use std::io::Write;
+use tracing::{debug, warn, instrument};
 
 /// Gateway management.
+#[instrument(skip(args, workspace_dir), fields(action))]
 pub fn exec_gateway(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let action = args
         .get("action")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: action".to_string())?;
+
+    tracing::Span::current().record("action", action);
+    debug!("Executing gateway tool");
 
     let config_path = workspace_dir
         .parent()
@@ -130,10 +135,13 @@ pub fn exec_gateway(args: &Value, workspace_dir: &Path) -> Result<String, String
                 .to_string(),
         ),
 
-        _ => Err(format!(
-            "Unknown action: {}. Valid: restart, config.get, config.schema, config.apply, config.patch, update.run",
-            action
-        )),
+        _ => {
+            warn!(action, "Unknown gateway action");
+            Err(format!(
+                "Unknown action: {}. Valid: restart, config.get, config.schema, config.apply, config.patch, update.run",
+                action
+            ))
+        }
     }
 }
 
@@ -160,11 +168,15 @@ fn merge_json(base: Value, patch: Value) -> Value {
 ///
 /// Supports Discord and Telegram when bot tokens are configured via environment.
 /// Falls back to stub behavior if no tokens are available.
+#[instrument(skip(args, _workspace_dir), fields(action))]
 pub fn exec_message(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     let action = args
         .get("action")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: action".to_string())?;
+
+    tracing::Span::current().record("action", action);
+    debug!("Executing message tool");
 
     match action {
         "send" => {
@@ -345,11 +357,16 @@ fn send_webhook(url: &str, target: &str, content: &str) -> Result<String, String
 /// Text-to-speech conversion using OpenAI TTS API.
 ///
 /// Falls back to stub behavior if no API key is available.
+/// Text-to-speech using OpenAI API.
+#[instrument(skip(args, workspace_dir), fields(text_len))]
 pub fn exec_tts(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let text = args
         .get("text")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: text".to_string())?;
+
+    tracing::Span::current().record("text_len", text.len());
+    debug!("Executing TTS");
 
     // Create output directory
     let output_dir = workspace_dir.join(".tts");
@@ -438,11 +455,14 @@ pub fn exec_tts(args: &Value, workspace_dir: &Path) -> Result<String, String> {
 ///
 /// Supports OpenAI GPT-4V, Anthropic Claude 3, and Google Gemini.
 /// Falls back to stub behavior if no API key is available.
+#[instrument(skip(args, workspace_dir))]
 pub fn exec_image(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let image_path = args
         .get("image")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: image".to_string())?;
+
+    debug!(image = image_path, "Executing image analysis");
 
     let prompt = args
         .get("prompt")

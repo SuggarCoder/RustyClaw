@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 use std::path::Path;
+use tracing::{debug, instrument};
 
 /// Default half-life for temporal decay in days.
 const DEFAULT_HALF_LIFE_DAYS: f64 = 30.0;
@@ -10,11 +11,14 @@ const DEFAULT_HALF_LIFE_DAYS: f64 = 30.0;
 ///
 /// Supports optional recency boosting via temporal decay. Recent memory files
 /// are weighted higher using exponential decay with a configurable half-life.
+#[instrument(skip(args, workspace_dir), fields(query))]
 pub fn exec_memory_search(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: query".to_string())?;
+
+    tracing::Span::current().record("query", query);
 
     let max_results = args
         .get("maxResults")
@@ -36,6 +40,8 @@ pub fn exec_memory_search(args: &Value, workspace_dir: &Path) -> Result<String, 
         .get("halfLifeDays")
         .and_then(|v| v.as_f64())
         .unwrap_or(DEFAULT_HALF_LIFE_DAYS);
+
+    debug!(max_results, min_score, use_recency, half_life_days, "Searching memory");
 
     // Build index and search
     let index = crate::memory::MemoryIndex::index_workspace(workspace_dir)?;
@@ -88,13 +94,16 @@ pub fn exec_memory_search(args: &Value, workspace_dir: &Path) -> Result<String, 
     }
 
     if count == 0 {
+        debug!("No results above minimum score threshold");
         return Ok("No matching memories found above the minimum score threshold.".to_string());
     }
 
+    debug!(result_count = count, "Memory search complete");
     Ok(output)
 }
 
 /// Read content from a memory file.
+#[instrument(skip(args, workspace_dir))]
 pub fn exec_memory_get(args: &Value, workspace_dir: &Path) -> Result<String, String> {
     let path = args
         .get("path")
@@ -110,6 +119,8 @@ pub fn exec_memory_get(args: &Value, workspace_dir: &Path) -> Result<String, Str
         .get("lines")
         .and_then(|v| v.as_u64())
         .map(|n| n as usize);
+
+    debug!(path, from_line, num_lines, "Reading memory file");
 
     crate::memory::read_memory_file(workspace_dir, path, from_line, num_lines)
 }
