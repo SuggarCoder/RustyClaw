@@ -1,0 +1,48 @@
+[package]
+name = "rustyclaw-cli"
+description = "CLI binary for RustyClaw — main entry point and gateway daemon"
+keywords = ["ai", "agent", "cli"]
+categories = ["command-line-utilities"]
+default-run = "rustyclaw"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["tui"]
+tui = ["dep:rustyclaw-tui"]
+
+[dependencies]
+rustyclaw-core.workspace = true
+rustyclaw-tui = { workspace = true, optional = true }
+
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+url.workspace = true
+colored.workspace = true
+rpassword.workspace = true
+dirs.workspace = true
+qrcode.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "rustyclaw"
+path = "src/main.rs"
+
+[[bin]]
+name = "rustyclaw-gateway"
+path = "src/bin/rustyclaw-gateway.rs"

@@ -1,0 +1,47 @@
+[package]
+name = "rustyclaw-tui"
+description = "Terminal UI client for RustyClaw"
+keywords = ["ai", "agent", "tui", "terminal"]
+categories = ["command-line-utilities"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rustyclaw-core.workspace = true
+
+# TUI framework
+ratatui.workspace = true
+crossterm.workspace = true
+tui-markdown.workspace = true
+tui-input.workspace = true
+
+# Also needed directly by TUI code
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+clap.workspace = true
+tracing.workspace = true
+colored.workspace = true
+indicatif.workspace = true
+unicode-width.workspace = true
+rpassword.workspace = true
+url.workspace = true
+strum.workspace = true
+chrono.workspace = true
+qrcode.workspace = true
+totp-rs.workspace = true
+dirs.workspace = true
+reqwest.workspace = true
+shellexpand.workspace = true

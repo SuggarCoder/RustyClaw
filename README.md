@@ -17,13 +17,14 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
+  <a href="#building-from-source">Building</a> •
   <a href="#why-rustyclaw">Why RustyClaw</a> •
   <a href="#features">Features</a> •
   <a href="#security">Security</a> •
   <a href="#architecture">Architecture</a>
 </p>
 
----
+ pu---
 
 ## What is RustyClaw?
 
@@ -112,7 +113,21 @@ research.steer("Focus specifically on Constitutional AI approaches");
 
 ## Quick Start
 
-### Install
+### One-Line Setup (Everything)
+
+Install RustyClaw plus all supporting tools (uv, Ollama, Node.js, Exo):
+
+```bash
+# From a clone
+git clone https://github.com/rexlunae/RustyClaw.git && cd RustyClaw
+./scripts/setup.sh
+
+# Or pick components
+./scripts/setup.sh --skip exo          # skip exo
+./scripts/setup.sh --only rust rustyclaw  # just Rust + RustyClaw
+```
+
+### Install RustyClaw Only
 
 ```bash
 cargo install rustyclaw
@@ -141,6 +156,121 @@ rustyclaw tui
 # Or run as a daemon for integrations
 rustyclaw gateway start
 ```
+
+## Building from Source
+
+RustyClaw is organized as a **Cargo workspace** with three crates:
+
+| Crate | Path | Description |
+|-------|------|-------------|
+| **rustyclaw-core** | `crates/rustyclaw-core/` | Core library — config, gateway, tools, secrets, providers |
+| **rustyclaw-cli** | `crates/rustyclaw-cli/` | CLI binaries (`rustyclaw` and `rustyclaw-gateway`) |
+| **rustyclaw-tui** | `crates/rustyclaw-tui/` | Terminal UI client (ratatui) |
+
+### Prerequisites
+
+- **Rust 1.85+** (Edition 2024)
+- **OpenSSL** development headers (vendored by default)
+
+```bash
+# macOS — no extra deps needed (uses vendored OpenSSL)
+
+# Ubuntu / Debian
+sudo apt install build-essential pkg-config
+
+# Fedora / RHEL
+sudo dnf install gcc openssl-devel
+```
+
+### Build the Workspace
+
+```bash
+git clone https://github.com/rexlunae/RustyClaw.git
+cd RustyClaw
+
+# Debug build (fast compile, all crates)
+cargo build --workspace
+
+# Release build (optimized, ~11 MB binary with LTO)
+cargo build --release
+```
+
+Binaries are produced at:
+- `target/release/rustyclaw` — main CLI + TUI
+- `target/release/rustyclaw-gateway` — standalone gateway daemon
+
+### Feature Flags
+
+Features are split across the workspace crates:
+
+**rustyclaw-cli** (binary crate):
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `tui` | Terminal UI (ratatui + crossterm) | ✅ |
+
+**rustyclaw-core** (library crate):
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `web-tools` | HTML parsing via scraper + html2md | ✅ |
+| `matrix` | Matrix messenger support | |
+| `browser` | CDP browser automation (chromiumoxide) | |
+| `full` | web-tools + matrix + browser | |
+| `signal` | Signal messenger (source-only, see below) | |
+
+```bash
+# Default (TUI + web tools)
+cargo build --release
+
+# Headless gateway only (no TUI)
+cargo build --release -p rustyclaw-cli --no-default-features
+
+# With Matrix support
+cargo build --release --features rustyclaw-core/matrix
+
+# Everything enabled
+cargo build --release --features rustyclaw-core/full
+
+# Build only the core library
+cargo check -p rustyclaw-core
+
+# Build only the TUI client
+cargo check -p rustyclaw-tui
+```
+
+### Running Tests
+
+```bash
+# All workspace tests
+cargo test --workspace
+
+# Core library tests only
+cargo test -p rustyclaw-core
+
+# TUI client tests only
+cargo test -p rustyclaw-tui
+```
+
+### Cross-Compilation (Raspberry Pi)
+
+Build a headless gateway for ARM using [cross](https://github.com/cross-rs/cross):
+
+```bash
+cargo install cross --git https://github.com/cross-rs/cross
+
+# 64-bit (Pi 3/4/5)
+cross build --release --target aarch64-unknown-linux-gnu \
+  -p rustyclaw-cli --no-default-features
+
+# 32-bit (Pi 2/3)
+cross build --release --target armv7-unknown-linux-gnueabihf \
+  -p rustyclaw-cli --no-default-features
+```
+
+### Signal Messenger (Source Only)
+
+Signal requires git-only dependencies not on crates.io. See [BUILDING.md](BUILDING.md) for detailed instructions on enabling Signal support.
 
 ## Features
 
@@ -226,7 +356,7 @@ RustyClaw's security model is documented in detail:
 - **[THREAT_MODEL.md](docs/THREAT_MODEL.md)** — Known threats and mitigations
 - **[AUDIT.md](docs/AUDIT.md)** — Audit log and findings
 
-### Quick Overview
+t### Quick Overview
 
 ```
 User Input
@@ -288,16 +418,32 @@ trait RuntimeAdapter {
 }
 ```
 
+### Workspace Layout
+
+```
+RustyClaw/
+├── Cargo.toml              # Workspace root
+├── crates/
+│   ├── rustyclaw-core/     # Core library (config, gateway, tools, secrets, providers)
+│   ├── rustyclaw-cli/      # CLI binaries (rustyclaw + rustyclaw-gateway)
+│   └── rustyclaw-tui/      # Terminal UI client (ratatui)
+├── docs/                   # Architecture, security, and client spec docs
+├── tests/                  # Integration and E2E tests
+└── website/                # Project website and install scripts
+```
+
 ### Core Components
 
-| Component | Responsibility |
-|-----------|----------------|
-| **Gateway** | Daemon process, session management, heartbeats |
-| **Agent Loop** | LLM calls, tool execution, context management |
-| **Tool Registry** | Dynamic tool registration, validation, execution |
-| **Session Manager** | Multi-agent coordination, history, spawn/steer |
-| **Security Layer** | PromptGuard, LeakDetector, SSRF, sandbox |
-| **Secrets Vault** | Encrypted credential storage, access policies |
+| Component | Crate | Responsibility |
+|-----------|-------|----------------|
+| **Gateway** | core | Daemon process, WebSocket protocol, session management |
+| **Agent Loop** | core | LLM calls, tool execution, context management |
+| **Tool Registry** | core | 30+ tools with dynamic registration and validation |
+| **Session Manager** | core | Multi-agent coordination, history, spawn/steer |
+| **Security Layer** | core | PromptGuard, LeakDetector, SSRF, sandbox |
+| **Secrets Vault** | core | AES-256 encrypted credential storage, access policies |
+| **Terminal UI** | tui | Interactive chat, tool approval, config management |
+| **CLI** | cli | Command-line entry point, onboarding wizard |
 
 ## Comparison
 
