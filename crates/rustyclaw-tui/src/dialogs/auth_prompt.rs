@@ -5,8 +5,8 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::action::Action;
 use crate::panes::DisplayMessage;
-use rustyclaw_core::types::GatewayStatus;
 use crate::tui_palette as tp;
+use rustyclaw_core::types::GatewayStatus;
 
 /// State for the gateway TOTP authentication prompt dialog.
 pub struct AuthPromptState {

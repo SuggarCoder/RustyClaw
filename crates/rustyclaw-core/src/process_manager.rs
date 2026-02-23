@@ -21,7 +21,9 @@ fn generate_session_id() -> SessionId {
         .as_millis();
 
     // Simple adjective-noun pattern for readability
-    let adjectives = ["warm", "cool", "swift", "calm", "bold", "keen", "bright", "quick"];
+    let adjectives = [
+        "warm", "cool", "swift", "calm", "bold", "keen", "bright", "quick",
+    ];
     let nouns = ["rook", "hawk", "wolf", "bear", "fox", "owl", "lynx", "crow"];
 
     let adj_idx = (timestamp % adjectives.len() as u128) as usize;
@@ -213,7 +215,8 @@ impl ExecSession {
             }
             Ok(None) => {
                 // Still running, check timeout
-                let timed_out = self.timeout
+                let timed_out = self
+                    .timeout
                     .map(|t| self.started_at.elapsed() > t)
                     .unwrap_or(false);
                 if timed_out {
@@ -439,12 +442,8 @@ impl ProcessManager {
             .spawn()
             .map_err(|e| format!("Failed to spawn process: {}", e))?;
 
-        let session = ExecSession::new(
-            command.to_string(),
-            working_dir.to_string(),
-            timeout,
-            child,
-        );
+        let session =
+            ExecSession::new(command.to_string(), working_dir.to_string(), timeout, child);
 
         let id = session.id.clone();
         self.sessions.insert(id.clone(), session);
@@ -499,7 +498,8 @@ impl ProcessManager {
 
     /// Clear completed sessions.
     pub fn clear_completed(&mut self) {
-        self.sessions.retain(|_, s| s.status == SessionStatus::Running);
+        self.sessions
+            .retain(|_, s| s.status == SessionStatus::Running);
     }
 }
 

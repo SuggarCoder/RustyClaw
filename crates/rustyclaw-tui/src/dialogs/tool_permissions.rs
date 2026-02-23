@@ -54,10 +54,7 @@ impl ToolPermissionsState {
     /// Get the permission for the currently selected tool.
     pub fn current_permission(&self) -> ToolPermission {
         if let Some(name) = self.tool_names.get(self.selected) {
-            self.permissions
-                .get(*name)
-                .cloned()
-                .unwrap_or_default()
+            self.permissions.get(*name).cloned().unwrap_or_default()
         } else {
             ToolPermission::default()
         }
@@ -128,7 +125,8 @@ pub fn handle_tool_permissions_key(
                 (Some(state), Action::Noop)
             }
             KeyCode::PageDown => {
-                state.selected = (state.selected + 15).min(state.tool_names.len().saturating_sub(1));
+                state.selected =
+                    (state.selected + 15).min(state.tool_names.len().saturating_sub(1));
                 (Some(state), Action::Noop)
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
@@ -144,7 +142,9 @@ pub fn handle_tool_permissions_key(
                     } else {
                         String::new()
                     };
-                    state.permissions.insert(name, ToolPermission::SkillOnly(Vec::new()));
+                    state
+                        .permissions
+                        .insert(name, ToolPermission::SkillOnly(Vec::new()));
                     state.dirty = true;
                     state.phase = ToolPermissionsPhase::EditingSkills {
                         input: existing_skills,
@@ -179,14 +179,15 @@ pub fn handle_tool_permissions_key(
             KeyCode::Char('s') => {
                 // Quick-set: SkillOnly (open editor)
                 let name = state.current_tool().to_string();
-                let existing_skills = if let Some(ToolPermission::SkillOnly(s)) =
-                    state.permissions.get(&name)
-                {
-                    s.join(", ")
-                } else {
-                    String::new()
-                };
-                state.permissions.insert(name.clone(), ToolPermission::SkillOnly(Vec::new()));
+                let existing_skills =
+                    if let Some(ToolPermission::SkillOnly(s)) = state.permissions.get(&name) {
+                        s.join(", ")
+                    } else {
+                        String::new()
+                    };
+                state
+                    .permissions
+                    .insert(name.clone(), ToolPermission::SkillOnly(Vec::new()));
                 state.dirty = true;
                 state.phase = ToolPermissionsPhase::EditingSkills {
                     input: existing_skills,
@@ -273,8 +274,7 @@ pub fn draw_tool_permissions(
     match state.phase {
         ToolPermissionsPhase::Selecting => {
             let title = " Tool Permissions ";
-            let hint =
-                " ↑↓ nav · Enter/Space cycle · a/d/?/s quick-set · A/D all · Esc close ";
+            let hint = " ↑↓ nav · Enter/Space cycle · a/d/?/s quick-set · A/D all · Esc close ";
 
             let block = Block::default()
                 .title(Span::styled(title, tp::title_focused()))
@@ -345,11 +345,7 @@ pub fn draw_tool_permissions(
                 .skip(scroll)
                 .take(visible_rows)
             {
-                let perm = state
-                    .permissions
-                    .get(*name)
-                    .cloned()
-                    .unwrap_or_default();
+                let perm = state.permissions.get(*name).cloned().unwrap_or_default();
                 let is_selected = i == state.selected;
                 let marker = if is_selected { "❯ " } else { "  " };
 

@@ -4,11 +4,11 @@
 //! for Select, MultiSelect, Confirm, TextInput, or Form prompts.
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::action::Action;
 use crate::tui_palette as tp;
@@ -102,9 +102,7 @@ impl UserPromptState {
                             .iter()
                             .zip(selected.iter())
                             .filter(|(_, s)| **s)
-                            .map(|(opt, _)| {
-                                opt.value.clone().unwrap_or_else(|| opt.label.clone())
-                            })
+                            .map(|(opt, _)| opt.value.clone().unwrap_or_else(|| opt.label.clone()))
                             .collect();
                         serde_json::json!(vals)
                     } else {
@@ -117,10 +115,7 @@ impl UserPromptState {
                     if let PromptType::Form { fields } = &self.prompt.prompt_type {
                         let mut obj = serde_json::Map::new();
                         for (field, value) in fields.iter().zip(inputs.iter()) {
-                            obj.insert(
-                                field.name.clone(),
-                                serde_json::json!(value),
-                            );
+                            obj.insert(field.name.clone(), serde_json::json!(value));
                         }
                         serde_json::Value::Object(obj)
                     } else {
@@ -139,10 +134,7 @@ impl UserPromptState {
 
 // ── Key handling ────────────────────────────────────────────────────────────
 
-pub fn handle_user_prompt_key(
-    state: &mut UserPromptState,
-    key: KeyEvent,
-) -> Option<Action> {
+pub fn handle_user_prompt_key(state: &mut UserPromptState, key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Esc => {
             let resp = state.build_response(true);
@@ -227,7 +219,11 @@ fn handle_multiselect_key(state: &mut UserPromptState, code: KeyCode) -> Option<
 fn handle_confirm_key(state: &mut UserPromptState, code: KeyCode) -> Option<Action> {
     if let PromptPhase::Confirm { yes } = &mut state.phase {
         match code {
-            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::Char('h') | KeyCode::Char('l') => {
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Tab
+            | KeyCode::Char('h')
+            | KeyCode::Char('l') => {
                 *yes = !*yes;
             }
             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -254,7 +250,9 @@ fn handle_text_input_key(state: &mut UserPromptState, code: KeyCode) -> Option<A
     if let PromptPhase::TextInput { input } = &mut state.phase {
         match code {
             KeyCode::Char(c) => input.push(c),
-            KeyCode::Backspace => { input.pop(); }
+            KeyCode::Backspace => {
+                input.pop();
+            }
             KeyCode::Enter => {
                 let resp = state.build_response(false);
                 return Some(Action::UserPromptResponse(resp));
@@ -318,7 +316,9 @@ pub fn draw_user_prompt(f: &mut Frame, state: &mut UserPromptState) {
 
     let hint = match &state.phase {
         PromptPhase::Select { .. } => " ↑↓ nav · Enter select · Esc cancel ",
-        PromptPhase::MultiSelect { .. } => " ↑↓ nav · Space toggle · a all · Enter submit · Esc cancel ",
+        PromptPhase::MultiSelect { .. } => {
+            " ↑↓ nav · Space toggle · a all · Enter submit · Esc cancel "
+        }
         PromptPhase::Confirm { .. } => " ←→ toggle · y/n · Enter confirm · Esc cancel ",
         PromptPhase::TextInput { .. } => " Type response · Enter submit · Esc cancel ",
         PromptPhase::Form { .. } => " ↑↓/Tab nav · Type text · Enter next/submit · Esc cancel ",
@@ -344,11 +344,8 @@ pub fn draw_user_prompt(f: &mut Frame, state: &mut UserPromptState) {
     // Description if present
     let (_desc_height, body_area) = if let Some(desc) = &state.prompt.description {
         let desc_lines = 2u16; // rough estimate
-        let chunks = Layout::vertical([
-            Constraint::Length(desc_lines),
-            Constraint::Min(2),
-        ])
-        .split(inner);
+        let chunks =
+            Layout::vertical([Constraint::Length(desc_lines), Constraint::Min(2)]).split(inner);
 
         let desc_widget = Paragraph::new(Line::from(Span::styled(
             desc.clone(),
@@ -381,11 +378,12 @@ pub fn draw_user_prompt(f: &mut Frame, state: &mut UserPromptState) {
             draw_confirm(f, body_area, *yes);
         }
         PromptPhase::TextInput { input } => {
-            let placeholder = if let PromptType::TextInput { placeholder, .. } = &state.prompt.prompt_type {
-                placeholder.clone()
-            } else {
-                None
-            };
+            let placeholder =
+                if let PromptType::TextInput { placeholder, .. } = &state.prompt.prompt_type {
+                    placeholder.clone()
+                } else {
+                    None
+                };
             draw_text_input(f, body_area, input, placeholder.as_deref());
         }
         PromptPhase::Form { cursor, inputs } => {
@@ -397,7 +395,11 @@ pub fn draw_user_prompt(f: &mut Frame, state: &mut UserPromptState) {
 }
 
 fn compute_height(state: &UserPromptState) -> u16 {
-    let desc_lines: u16 = if state.prompt.description.is_some() { 3 } else { 0 };
+    let desc_lines: u16 = if state.prompt.description.is_some() {
+        3
+    } else {
+        0
+    };
     let body_lines: u16 = match &state.prompt.prompt_type {
         PromptType::Select { options, .. } => (options.len() as u16).min(16) + 1,
         PromptType::MultiSelect { options, .. } => (options.len() as u16).min(16) + 1,
@@ -553,10 +555,7 @@ fn draw_text_input(f: &mut Frame, area: Rect, input: &str, placeholder: Option<&
                 Style::default().fg(tp::MUTED),
             ))
         } else {
-            Line::from(Span::styled(
-                " > _",
-                Style::default().fg(tp::TEXT),
-            ))
+            Line::from(Span::styled(" > _", Style::default().fg(tp::TEXT)))
         }
     } else {
         Line::from(vec![
@@ -570,13 +569,7 @@ fn draw_text_input(f: &mut Frame, area: Rect, input: &str, placeholder: Option<&
     f.render_widget(Paragraph::new(display), area);
 }
 
-fn draw_form(
-    f: &mut Frame,
-    area: Rect,
-    fields: &[FormField],
-    cursor: usize,
-    inputs: &[String],
-) {
+fn draw_form(f: &mut Frame, area: Rect, fields: &[FormField], cursor: usize, inputs: &[String]) {
     let mut lines = Vec::new();
     for (i, field) in fields.iter().enumerate() {
         let is_active = i == cursor;

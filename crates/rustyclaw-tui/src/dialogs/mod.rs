@@ -9,9 +9,9 @@ mod model_selector;
 mod policy_picker;
 mod provider_selector;
 mod secret_viewer;
-mod totp;
 mod tool_approval;
 mod tool_permissions;
+mod totp;
 pub mod user_prompt;
 mod vault_unlock;
 
@@ -39,19 +39,19 @@ pub use provider_selector::{
 pub use secret_viewer::{
     SecretViewerState, copy_to_clipboard, draw_secret_viewer, handle_secret_viewer_key,
 };
-pub use totp::{TotpDialogPhase, TotpDialogState, draw_totp_dialog, handle_totp_dialog_key, handle_totp_dialog_key_gateway};
-pub use vault_unlock::{
-    VaultUnlockPromptState, draw_vault_unlock_prompt, handle_vault_unlock_prompt_key,
-};
+pub use tool_approval::{ToolApprovalState, draw_tool_approval, handle_tool_approval_key};
 pub use tool_permissions::{
     ToolPermissionsState, draw_tool_permissions, handle_tool_permissions_key,
 };
-pub use tool_approval::{
-    ToolApprovalState, draw_tool_approval, handle_tool_approval_key,
+pub use totp::{
+    TotpDialogPhase, TotpDialogState, draw_totp_dialog, handle_totp_dialog_key,
+    handle_totp_dialog_key_gateway,
 };
 pub use user_prompt::{
-    UserPrompt, UserPromptResponse, UserPromptState, draw_user_prompt,
-    handle_user_prompt_key,
+    UserPrompt, UserPromptResponse, UserPromptState, draw_user_prompt, handle_user_prompt_key,
+};
+pub use vault_unlock::{
+    VaultUnlockPromptState, draw_vault_unlock_prompt, handle_vault_unlock_prompt_key,
 };
 
 /// Spinner frames for loading animations.

@@ -151,7 +151,11 @@ pub fn draw_secret_viewer(frame: &mut ratatui::Frame<'_>, area: Rect, viewer: &S
     frame.render_widget(Clear, dialog_area);
 
     let title = format!(" {} ", viewer.name);
-    let reveal_hint = if viewer.revealed { "r:hide" } else { "r:reveal" };
+    let reveal_hint = if viewer.revealed {
+        "r:hide"
+    } else {
+        "r:reveal"
+    };
     let hint = format!(
         " ↑↓ select · c copy · a copy all · {} · Esc close ",
         reveal_hint,
@@ -200,9 +204,7 @@ pub fn draw_secret_viewer(frame: &mut ratatui::Frame<'_>, area: Rect, viewer: &S
                 Style::default()
                     .fg(tp::ACCENT_BRIGHT)
                     .add_modifier(Modifier::BOLD),
-                Style::default()
-                    .fg(tp::TEXT)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(tp::TEXT).add_modifier(Modifier::BOLD),
             )
         } else {
             (

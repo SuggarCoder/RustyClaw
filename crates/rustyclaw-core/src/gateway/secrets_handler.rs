@@ -1,4 +1,4 @@
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
 use crate::secrets::{AccessContext, AccessPolicy, CredentialValue, SecretEntry, SecretKind};
 
@@ -109,11 +109,7 @@ pub async fn exec_secrets_get(
 }
 
 /// Format a credential value for returning to the model.
-pub fn format_credential_value(
-    name: &str,
-    entry: &SecretEntry,
-    value: &CredentialValue,
-) -> String {
+pub fn format_credential_value(name: &str, entry: &SecretEntry, value: &CredentialValue) -> String {
     match value {
         CredentialValue::Single(v) => {
             format!("[{}] {} = {}", entry.kind, name, v)
@@ -124,7 +120,10 @@ pub fn format_credential_value(
                 entry.kind, name, username, password,
             )
         }
-        CredentialValue::SshKeyPair { private_key, public_key } => {
+        CredentialValue::SshKeyPair {
+            private_key,
+            public_key,
+        } => {
             format!(
                 "[{}] {}\n  public_key: {}\n  private_key: <{} chars>",
                 entry.kind,
@@ -187,7 +186,11 @@ pub async fn exec_secrets_store(
 
     let username = args.get("username").and_then(|v| v.as_str());
 
-    debug!(credential = cred_name, kind = kind_str, "Storing credential");
+    debug!(
+        credential = cred_name,
+        kind = kind_str,
+        "Storing credential"
+    );
 
     let kind = match kind_str {
         "api_key" => SecretKind::ApiKey,
@@ -211,9 +214,7 @@ pub async fn exec_secrets_store(
     };
 
     if kind == SecretKind::UsernamePassword && username.is_none() {
-        return Err(
-            "username_password credentials require the 'username' parameter.".into(),
-        );
+        return Err("username_password credentials require the 'username' parameter.".into());
     }
 
     let entry = SecretEntry {

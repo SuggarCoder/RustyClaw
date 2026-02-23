@@ -1,26 +1,25 @@
 use crate::action::Action;
-use rustyclaw_core::commands::{handle_command, CommandAction, CommandContext};
-use rustyclaw_core::config::Config;
 use crate::dialogs::{
     self, ApiKeyDialogState, AuthPromptState, CredDialogOption, CredentialDialogState,
     FetchModelsLoading, ModelSelectorState, PolicyPickerState, ProviderSelectorState,
-    SecretViewerState, TotpDialogPhase, TotpDialogState, ToolPermissionsState,
-    ToolApprovalState, UserPromptState,
-    VaultUnlockPromptState, SPINNER_FRAMES,
+    SPINNER_FRAMES, SecretViewerState, ToolApprovalState, ToolPermissionsState, TotpDialogPhase,
+    TotpDialogState, UserPromptState, VaultUnlockPromptState,
 };
-use rustyclaw_core::gateway::{ChatMessage, ClientFrame, ClientFrameType, ClientPayload};
+use crate::pages::Page;
 use crate::pages::hatching::Hatching;
 use crate::pages::home::Home;
-use crate::pages::Page;
 use crate::panes::footer::FooterPane;
 use crate::panes::header::HeaderPane;
 use crate::panes::{DisplayMessage, Pane, PaneState};
-use rustyclaw_core::types::{GatewayStatus, InputMode};
+use crate::tui::{Event, EventResponse, Tui};
+use rustyclaw_core::commands::{CommandAction, CommandContext, handle_command};
+use rustyclaw_core::config::Config;
+use rustyclaw_core::gateway::{ChatMessage, ClientFrame, ClientFrameType, ClientPayload};
 use rustyclaw_core::providers;
 use rustyclaw_core::secrets::SecretsManager;
 use rustyclaw_core::skills::SkillManager;
 use rustyclaw_core::soul::SoulManager;
-use crate::tui::{Event, EventResponse, Tui};
+use rustyclaw_core::types::{GatewayStatus, InputMode};
 
 use anyhow::Result;
 use ratatui::prelude::*;
@@ -127,8 +126,9 @@ impl App {
         let history_path = Self::history_path(&config);
         let conversation_history = Self::load_history(&history_path, &soul_manager, &skill_manager);
 
-        let mut messages =
-            vec![DisplayMessage::info("Welcome to RustyClaw! Type /help for commands.")];
+        let mut messages = vec![DisplayMessage::info(
+            "Welcome to RustyClaw! Type /help for commands.",
+        )];
         let prior_turns: usize = conversation_history
             .iter()
             .filter(|m| m.role != "system")
@@ -241,14 +241,15 @@ impl App {
                             if let Event::Key(key) = &event {
                                 if key.code == crossterm::event::KeyCode::Esc {
                                     self.send_cancel().await;
-                                    self.state.messages.push(DisplayMessage::info(
-                                        "Cancelling tool loop…",
-                                    ));
+                                    self.state
+                                        .messages
+                                        .push(DisplayMessage::info("Cancelling tool loop…"));
                                     continue;
                                 }
                             }
                             None
-                        } else if self.fetch_loading.is_some() || self.device_flow_loading.is_some() {
+                        } else if self.fetch_loading.is_some() || self.device_flow_loading.is_some()
+                        {
                             if let Event::Key(key) = &event {
                                 if key.code == crossterm::event::KeyCode::Esc {
                                     if self.device_flow_loading.is_some() {
@@ -388,11 +389,28 @@ impl App {
                                         Some(Action::Noop)
                                     }
                                     crossterm::event::KeyCode::Enter => {
-                                        if let Some(entry) = self.cached_secrets.get(self.secrets_scroll) {
-                                            let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                                            let disabled = entry.get("disabled").and_then(|d| d.as_bool()).unwrap_or(false);
-                                            let policy = entry.get("policy")
-                                                .and_then(|p| serde_json::from_value::<rustyclaw_core::secrets::AccessPolicy>(p.clone()).ok())
+                                        if let Some(entry) =
+                                            self.cached_secrets.get(self.secrets_scroll)
+                                        {
+                                            let name = entry
+                                                .get("name")
+                                                .and_then(|n| n.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let disabled = entry
+                                                .get("disabled")
+                                                .and_then(|d| d.as_bool())
+                                                .unwrap_or(false);
+                                            let policy = entry
+                                                .get("policy")
+                                                .and_then(|p| {
+                                                    serde_json::from_value::<
+                                                        rustyclaw_core::secrets::AccessPolicy,
+                                                    >(
+                                                        p.clone()
+                                                    )
+                                                    .ok()
+                                                })
                                                 .map(|p| p.badge().to_string())
                                                 .unwrap_or_default();
                                             self.show_secrets_dialog = false;
@@ -528,12 +546,10 @@ impl App {
                 self.state.loading_line = None;
                 self.streaming_response = None;
                 self.state.streaming_started = None;
-                self.state
-                    .messages
-                    .push(DisplayMessage::warning(format!(
-                        "Gateway disconnected: {}",
-                        reason
-                    )));
+                self.state.messages.push(DisplayMessage::warning(format!(
+                    "Gateway disconnected: {}",
+                    reason
+                )));
                 self.ws_sink = None;
                 self.reader_task = None;
                 return Ok(Some(Action::Update));
@@ -583,8 +599,9 @@ impl App {
                 return Ok(None);
             }
             Action::ShowToolPermissions => {
-                self.tool_permissions_dialog =
-                    Some(ToolPermissionsState::new(&self.state.config.tool_permissions));
+                self.tool_permissions_dialog = Some(ToolPermissionsState::new(
+                    &self.state.config.tool_permissions,
+                ));
                 return Ok(None);
             }
             Action::SaveToolPermissions(permissions) => {
@@ -596,16 +613,24 @@ impl App {
                     .collect();
                 self.state.config.tool_permissions = cleaned;
                 if let Err(e) = self.state.config.save(None) {
-                    self.state
-                        .messages
-                        .push(DisplayMessage::error(format!("Failed to save config: {}", e)));
+                    self.state.messages.push(DisplayMessage::error(format!(
+                        "Failed to save config: {}",
+                        e
+                    )));
                 }
                 return Ok(None);
             }
-            Action::ToolApprovalRequest { id, name, arguments } => {
+            Action::ToolApprovalRequest {
+                id,
+                name,
+                arguments,
+            } => {
                 // Open the approval dialog for the user to decide.
-                self.tool_approval_dialog =
-                    Some(ToolApprovalState::new(id.clone(), name.clone(), arguments.clone()));
+                self.tool_approval_dialog = Some(ToolApprovalState::new(
+                    id.clone(),
+                    name.clone(),
+                    arguments.clone(),
+                ));
                 return Ok(None);
             }
             Action::ToolApprovalResponse { id, approved } => {
@@ -623,8 +648,7 @@ impl App {
             }
             Action::UserPromptRequest(prompt) => {
                 // Open the user prompt dialog.
-                self.user_prompt_dialog =
-                    Some(UserPromptState::new(prompt.clone()));
+                self.user_prompt_dialog = Some(UserPromptState::new(prompt.clone()));
                 return Ok(None);
             }
             Action::UserPromptResponse(resp) => {
@@ -694,9 +718,10 @@ impl App {
                 self.state
                     .messages
                     .push(DisplayMessage::info(format!("  ➜  {}", url)));
-                self.state
-                    .messages
-                    .push(DisplayMessage::info(format!("Then enter this code:  {}", code)));
+                self.state.messages.push(DisplayMessage::info(format!(
+                    "Then enter this code:  {}",
+                    code
+                )));
                 return Ok(Some(Action::Update));
             }
             Action::DeviceFlowAuthenticated { provider, token } => {
@@ -724,10 +749,15 @@ impl App {
             }
             Action::ShowCredentialDialog { name, disabled, .. } => {
                 let has_totp = self.state.config.totp_enabled;
-                let current_policy = self.cached_secrets.iter()
+                let current_policy = self
+                    .cached_secrets
+                    .iter()
                     .find(|e| e.get("name").and_then(|n| n.as_str()) == Some(name))
                     .and_then(|e| e.get("policy"))
-                    .and_then(|p| serde_json::from_value::<rustyclaw_core::secrets::AccessPolicy>(p.clone()).ok())
+                    .and_then(|p| {
+                        serde_json::from_value::<rustyclaw_core::secrets::AccessPolicy>(p.clone())
+                            .ok()
+                    })
                     .unwrap_or_default();
                 self.credential_dialog = Some(CredentialDialogState {
                     name: name.clone(),
@@ -763,9 +793,10 @@ impl App {
             Action::FinishHatching(soul_content) => {
                 let content = soul_content.clone();
                 if let Err(e) = self.state.soul_manager.set_content(content) {
-                    self.state
-                        .messages
-                        .push(DisplayMessage::error(format!("Failed to save SOUL.md: {}", e)));
+                    self.state.messages.push(DisplayMessage::error(format!(
+                        "Failed to save SOUL.md: {}",
+                        e
+                    )));
                 }
                 self.showing_hatching = false;
                 self.hatching_page = None;
@@ -898,12 +929,7 @@ impl App {
                     return Ok(Some(Action::RestartGateway));
                 }
                 CommandAction::GatewayInfo => {
-                    let url_display = self
-                        .state
-                        .config
-                        .gateway_url
-                        .as_deref()
-                        .unwrap_or("(none)");
+                    let url_display = self.state.config.gateway_url.as_deref().unwrap_or("(none)");
                     self.state.messages.push(DisplayMessage::system(format!(
                         "Gateway: {}  Status: {}",
                         url_display,
@@ -936,9 +962,10 @@ impl App {
                     });
                     model_cfg.model = Some(model.clone());
                     if let Err(e) = self.state.config.save(None) {
-                        self.state
-                            .messages
-                            .push(DisplayMessage::error(format!("Failed to save config: {}", e)));
+                        self.state.messages.push(DisplayMessage::error(format!(
+                            "Failed to save config: {}",
+                            e
+                        )));
                     } else {
                         self.state
                             .messages
@@ -961,24 +988,23 @@ impl App {
                 CommandAction::Download(ref media_id, ref dest_path) => {
                     let media_ref = self.find_media_ref(media_id);
                     match media_ref {
-                        Some(m) => {
-                            match self.download_media(&m, dest_path.as_deref()) {
-                                Ok(path) => {
-                                    self.state.messages.push(DisplayMessage::info(
-                                        format!("Downloaded to: {}", path)
-                                    ));
-                                }
-                                Err(e) => {
-                                    self.state.messages.push(DisplayMessage::error(
-                                        format!("Download failed: {}", e)
-                                    ));
-                                }
+                        Some(m) => match self.download_media(&m, dest_path.as_deref()) {
+                            Ok(path) => {
+                                self.state
+                                    .messages
+                                    .push(DisplayMessage::info(format!("Downloaded to: {}", path)));
                             }
-                        }
+                            Err(e) => {
+                                self.state
+                                    .messages
+                                    .push(DisplayMessage::error(format!("Download failed: {}", e)));
+                            }
+                        },
                         None => {
-                            self.state.messages.push(DisplayMessage::error(
-                                format!("Media not found: {}", media_id)
-                            ));
+                            self.state.messages.push(DisplayMessage::error(format!(
+                                "Media not found: {}",
+                                media_id
+                            )));
                         }
                     }
                 }
@@ -997,7 +1023,9 @@ impl App {
                 GatewayStatus::Connected | GatewayStatus::ModelReady
             ) && self.ws_sink.is_some()
             {
-                self.state.conversation_history.push(ChatMessage::text("user", &text));
+                self.state
+                    .conversation_history
+                    .push(ChatMessage::text("user", &text));
                 self.save_history();
 
                 let chat_json = serde_json::json!({
@@ -1011,9 +1039,9 @@ impl App {
                     Some(format!("  {} Waiting for model response\u{2026}", spinner,));
                 return Ok(Some(Action::SendToGateway(chat_json)));
             }
-            self.state
-                .messages
-                .push(DisplayMessage::warning("Gateway not connected — use /gateway start"));
+            self.state.messages.push(DisplayMessage::warning(
+                "Gateway not connected — use /gateway start",
+            ));
             Ok(Some(Action::Update))
         }
     }
@@ -1089,8 +1117,7 @@ impl App {
             }
             "uv" => {
                 let action = parts.get(1).copied().unwrap_or("version").to_string();
-                let rest: Vec<String> =
-                    parts.iter().skip(2).map(|s| s.to_string()).collect();
+                let rest: Vec<String> = parts.iter().skip(2).map(|s| s.to_string()).collect();
                 let d = ws_dir.clone();
                 let lbl = format!("uv {}", action);
                 (
@@ -1108,8 +1135,7 @@ impl App {
             }
             "npm" => {
                 let action = parts.get(1).copied().unwrap_or("status").to_string();
-                let rest: Vec<String> =
-                    parts.iter().skip(2).map(|s| s.to_string()).collect();
+                let rest: Vec<String> = parts.iter().skip(2).map(|s| s.to_string()).collect();
                 let d = ws_dir.clone();
                 let lbl = format!("npm {}", action);
                 (
@@ -1132,8 +1158,7 @@ impl App {
         self.state
             .messages
             .push(DisplayMessage::info(format!("Running /{}\u{2026}", label)));
-        self.state.loading_line =
-            Some(format!("  \u{231B} /{}\u{2026}", label));
+        self.state.loading_line = Some(format!("  \u{231B} /{}\u{2026}", label));
 
         // Spawn the blocking work on a background thread
         let tx = self.action_tx.clone();
@@ -1155,10 +1180,7 @@ impl App {
             }
         });
 
-        Some(Some(Action::TimedStatusLine(
-            format!("/{}", label),
-            3,
-        )))
+        Some(Some(Action::TimedStatusLine(format!("/{}", label), 3)))
     }
 
     pub fn history_path(config: &Config) -> std::path::PathBuf {
@@ -1230,8 +1252,7 @@ impl App {
 
     fn clear_history(&mut self) {
         self.state.conversation_history.clear();
-        if let Some(sys) =
-            Self::system_message(&self.state.soul_manager, &self.state.skill_manager)
+        if let Some(sys) = Self::system_message(&self.state.soul_manager, &self.state.skill_manager)
         {
             self.state.conversation_history.push(sys);
         }
@@ -1261,8 +1282,8 @@ impl App {
             let path = shellexpand::tilde(path);
             std::path::PathBuf::from(path.as_ref())
         } else {
-            let downloads = dirs::download_dir()
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let downloads =
+                dirs::download_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
             let filename = media_ref.filename.as_deref().unwrap_or(&media_ref.id);
             downloads.join(filename)
         };
@@ -1270,17 +1291,17 @@ impl App {
         if let Some(local_path) = &media_ref.local_path {
             let src = std::path::Path::new(local_path);
             if src.exists() {
-                std::fs::copy(src, &dest)
-                    .map_err(|e| format!("Failed to copy: {}", e))?;
+                std::fs::copy(src, &dest).map_err(|e| format!("Failed to copy: {}", e))?;
                 return Ok(dest.to_string_lossy().to_string());
             }
         }
 
         if let Some(url) = &media_ref.url {
-            let response = reqwest::blocking::get(url)
-                .map_err(|e| format!("Failed to download: {}", e))?;
+            let response =
+                reqwest::blocking::get(url).map_err(|e| format!("Failed to download: {}", e))?;
 
-            let bytes = response.bytes()
+            let bytes = response
+                .bytes()
                 .map_err(|e| format!("Failed to read response: {}", e))?;
 
             if let Some(parent) = dest.parent() {
@@ -1288,8 +1309,7 @@ impl App {
                     .map_err(|e| format!("Failed to create directory: {}", e))?;
             }
 
-            std::fs::write(&dest, &bytes)
-                .map_err(|e| format!("Failed to write file: {}", e))?;
+            std::fs::write(&dest, &bytes).map_err(|e| format!("Failed to write file: {}", e))?;
 
             return Ok(dest.to_string_lossy().to_string());
         }
@@ -1346,7 +1366,13 @@ impl App {
             }
 
             if self.show_secrets_dialog {
-                Self::draw_secrets_dialog(frame, area, &self.cached_secrets, &self.state.config, self.secrets_scroll);
+                Self::draw_secrets_dialog(
+                    frame,
+                    area,
+                    &self.cached_secrets,
+                    &self.state.config,
+                    self.secrets_scroll,
+                );
             }
 
             if let Some(ref dialog) = self.api_key_dialog {
@@ -1432,7 +1458,10 @@ impl App {
                     Span::styled(format!(" {} ", icon), icon_style),
                     Span::styled(&s.name, name_style),
                     Span::styled(
-                        format!(" — {}", s.description.as_deref().unwrap_or("No description")),
+                        format!(
+                            " — {}",
+                            s.description.as_deref().unwrap_or("No description")
+                        ),
                         Style::default().fg(tp::MUTED),
                     ),
                 ]))
@@ -1477,9 +1506,9 @@ impl App {
         config: &Config,
         scroll_offset: usize,
     ) {
-        use rustyclaw_core::secrets::AccessPolicy;
         use crate::tui_palette as tp;
         use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
+        use rustyclaw_core::secrets::AccessPolicy;
 
         let agent_access = config.agent_access;
         let has_totp = config.totp_enabled;
@@ -1533,13 +1562,29 @@ impl App {
         } else {
             for (i, entry_val) in cached_secrets.iter().enumerate() {
                 let highlight = i == scroll_offset;
-                let name = entry_val.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                let is_disabled = entry_val.get("disabled").and_then(|d| d.as_bool()).unwrap_or(false);
-                let label = entry_val.get("label").and_then(|l| l.as_str()).unwrap_or(name);
-                let kind_str = entry_val.get("kind").and_then(|k| k.as_str()).unwrap_or("ApiKey");
-                let description = entry_val.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                let name = entry_val
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("?");
+                let is_disabled = entry_val
+                    .get("disabled")
+                    .and_then(|d| d.as_bool())
+                    .unwrap_or(false);
+                let label = entry_val
+                    .get("label")
+                    .and_then(|l| l.as_str())
+                    .unwrap_or(name);
+                let kind_str = entry_val
+                    .get("kind")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("ApiKey");
+                let description = entry_val
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("");
 
-                let policy: AccessPolicy = entry_val.get("policy")
+                let policy: AccessPolicy = entry_val
+                    .get("policy")
                     .and_then(|p| serde_json::from_value(p.clone()).ok())
                     .unwrap_or_default();
 
@@ -1580,9 +1625,7 @@ impl App {
                     };
                     Span::styled(
                         badge_label,
-                        Style::default()
-                            .fg(Color::Rgb(0x1E, 0x1C, 0x1A))
-                            .bg(color),
+                        Style::default().fg(Color::Rgb(0x1E, 0x1C, 0x1A)).bg(color),
                     )
                 };
 

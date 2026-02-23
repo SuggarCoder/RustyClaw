@@ -5,9 +5,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::action::Action;
 use crate::panes::DisplayMessage;
+use crate::tui_palette as tp;
 use rustyclaw_core::providers;
 use rustyclaw_core::secrets::SecretsManager;
-use crate::tui_palette as tp;
 
 /// Phase of the API-key dialog overlay.
 #[derive(Debug, Clone, PartialEq)]
@@ -206,7 +206,9 @@ pub fn draw_api_key_dialog(frame: &mut ratatui::Frame<'_>, area: Rect, dialog: &
                 if inner.height >= 2 {
                     let help_line = Line::from(Span::styled(
                         format!(" {}", help),
-                        Style::default().fg(tp::MUTED).add_modifier(Modifier::ITALIC),
+                        Style::default()
+                            .fg(tp::MUTED)
+                            .add_modifier(Modifier::ITALIC),
                     ));
                     frame.render_widget(
                         Paragraph::new(help_line),
@@ -235,8 +237,12 @@ pub fn draw_api_key_dialog(frame: &mut ratatui::Frame<'_>, area: Rect, dialog: &
             // Masked input
             if inner.height >= help_offset + 2 {
                 let masked: String = "•".repeat(dialog.input.len());
-                let input_area =
-                    Rect::new(inner.x + 1, inner.y + help_offset + 1, inner.width.saturating_sub(2), 1);
+                let input_area = Rect::new(
+                    inner.x + 1,
+                    inner.y + help_offset + 1,
+                    inner.width.saturating_sub(2),
+                    1,
+                );
                 let prompt = Line::from(vec![
                     Span::styled("❯ ", Style::default().fg(tp::ACCENT)),
                     Span::styled(&masked, Style::default().fg(tp::TEXT)),

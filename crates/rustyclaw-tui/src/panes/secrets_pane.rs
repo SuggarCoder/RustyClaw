@@ -2,14 +2,16 @@ use anyhow::Result;
 use ratatui::{
     layout::{Constraint, Rect},
     prelude::*,
-    widgets::{Block, BorderType, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{
+        Block, BorderType, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    },
 };
 
 use crate::action::Action;
 use crate::panes::{Pane, PaneState};
-use rustyclaw_core::secrets::{AccessPolicy, SecretEntry};
-use crate::tui_palette as tp;
 use crate::tui::Frame;
+use crate::tui_palette as tp;
+use rustyclaw_core::secrets::{AccessPolicy, SecretEntry};
 
 pub struct SecretsPane {
     focused: bool,
@@ -74,7 +76,10 @@ impl SecretsPane {
             AccessPolicy::SkillOnly(skills) if skills.is_empty() => (" LOCK ", tp::MUTED),
             AccessPolicy::SkillOnly(_) => (" SKILL ", tp::INFO),
         };
-        Span::styled(label, Style::default().fg(Color::Rgb(0x1E, 0x1C, 0x1A)).bg(color))
+        Span::styled(
+            label,
+            Style::default().fg(Color::Rgb(0x1E, 0x1C, 0x1A)).bg(color),
+        )
     }
 }
 
@@ -150,9 +155,14 @@ impl Pane for SecretsPane {
             Span::styled("Agent Access: ", Style::default().fg(tp::TEXT_DIM)),
             Span::styled(access_label, access_style),
             Span::styled(
-                format!("  │  {} credential{}",
+                format!(
+                    "  │  {} credential{}",
                     self.cached_creds.len(),
-                    if self.cached_creds.len() == 1 { "" } else { "s" },
+                    if self.cached_creds.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
                 ),
                 Style::default().fg(tp::TEXT_DIM),
             ),
@@ -170,7 +180,9 @@ impl Pane for SecretsPane {
         if self.cached_creds.is_empty() {
             items.push(ListItem::new(Span::styled(
                 "  No credentials stored.",
-                Style::default().fg(tp::MUTED).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(tp::MUTED)
+                    .add_modifier(Modifier::ITALIC),
             )));
             items.push(ListItem::new(""));
         } else {
@@ -207,7 +219,10 @@ impl Pane for SecretsPane {
                 };
 
                 let label_style = if is_disabled {
-                    Style::default().fg(tp::MUTED).add_modifier(Modifier::CROSSED_OUT).patch(row_style)
+                    Style::default()
+                        .fg(tp::MUTED)
+                        .add_modifier(Modifier::CROSSED_OUT)
+                        .patch(row_style)
                 } else {
                     Style::default().fg(tp::TEXT).patch(row_style)
                 };
@@ -232,13 +247,33 @@ impl Pane for SecretsPane {
 
         // ── Legend ───────────────────────────────────────────────────
         items.push(ListItem::new(Line::from(vec![
-            Span::styled(" OPEN ", Style::default().fg(Color::Rgb(0x1E, 0x1C, 0x1A)).bg(tp::SUCCESS)),
+            Span::styled(
+                " OPEN ",
+                Style::default()
+                    .fg(Color::Rgb(0x1E, 0x1C, 0x1A))
+                    .bg(tp::SUCCESS),
+            ),
             Span::styled(" anytime  ", Style::default().fg(tp::TEXT_DIM)),
-            Span::styled(" ASK ", Style::default().fg(Color::Rgb(0x1E, 0x1C, 0x1A)).bg(tp::WARN)),
+            Span::styled(
+                " ASK ",
+                Style::default()
+                    .fg(Color::Rgb(0x1E, 0x1C, 0x1A))
+                    .bg(tp::WARN),
+            ),
             Span::styled(" per-use  ", Style::default().fg(tp::TEXT_DIM)),
-            Span::styled(" AUTH ", Style::default().fg(Color::Rgb(0x1E, 0x1C, 0x1A)).bg(tp::ERROR)),
+            Span::styled(
+                " AUTH ",
+                Style::default()
+                    .fg(Color::Rgb(0x1E, 0x1C, 0x1A))
+                    .bg(tp::ERROR),
+            ),
             Span::styled(" re-auth  ", Style::default().fg(tp::TEXT_DIM)),
-            Span::styled(" SKILL ", Style::default().fg(Color::Rgb(0x1E, 0x1C, 0x1A)).bg(tp::INFO)),
+            Span::styled(
+                " SKILL ",
+                Style::default()
+                    .fg(Color::Rgb(0x1E, 0x1C, 0x1A))
+                    .bg(tp::INFO),
+            ),
             Span::styled(" skill-gated", Style::default().fg(tp::TEXT_DIM)),
         ])));
 
@@ -266,8 +301,8 @@ impl Pane for SecretsPane {
                 .end_symbol(None)
                 .track_symbol(Some("│"))
                 .thumb_symbol("█");
-            let mut sb_state = ScrollbarState::new(self.cached_creds.len())
-                .position(self.scroll_offset);
+            let mut sb_state =
+                ScrollbarState::new(self.cached_creds.len()).position(self.scroll_offset);
             frame.render_stateful_widget(sb, area, &mut sb_state);
         }
 

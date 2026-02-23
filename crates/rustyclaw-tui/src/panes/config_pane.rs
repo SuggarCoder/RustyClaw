@@ -7,8 +7,8 @@ use ratatui::{
 
 use crate::action::Action;
 use crate::panes::{Pane, PaneState};
-use crate::tui_palette as tp;
 use crate::tui::Frame;
+use crate::tui_palette as tp;
 
 pub struct ConfigPane {
     focused: bool,
@@ -89,7 +89,11 @@ impl Pane for ConfigPane {
         let settings_str = state.config.settings_dir.display().to_string();
         let workspace_str = state.config.workspace_dir().display().to_string();
         let soul_path_str = state.soul_manager.get_path().display().to_string();
-        let secrets_str = if state.config.use_secrets { "enabled" } else { "disabled" };
+        let secrets_str = if state.config.use_secrets {
+            "enabled"
+        } else {
+            "disabled"
+        };
 
         fn kv<'a>(key: &'a str, val: &'a str) -> Line<'a> {
             Line::from(vec![
@@ -104,7 +108,10 @@ impl Pane for ConfigPane {
         ];
 
         // Model line with rich spans
-        let mut model_line_spans = vec![Span::styled("Model    : ", Style::default().fg(tp::TEXT_DIM))];
+        let mut model_line_spans = vec![Span::styled(
+            "Model    : ",
+            Style::default().fg(tp::TEXT_DIM),
+        )];
         model_line_spans.extend(model_info);
         lines.push(Line::from(model_line_spans));
 
@@ -118,7 +125,9 @@ impl Pane for ConfigPane {
 
         for line in soul_content.lines().take(10) {
             let style = if line.starts_with('#') {
-                Style::default().fg(tp::ACCENT_BRIGHT).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(tp::ACCENT_BRIGHT)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(tp::TEXT_DIM)
             };

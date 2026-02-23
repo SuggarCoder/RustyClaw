@@ -5,8 +5,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
 
 use crate::action::Action;
 use crate::panes::DisplayMessage;
-use rustyclaw_core::providers;
 use crate::tui_palette as tp;
+use rustyclaw_core::providers;
 
 /// State for the provider-selector dialog overlay.
 pub struct ProviderSelectorState {

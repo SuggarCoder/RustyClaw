@@ -4,7 +4,7 @@
 // packages, running scripts, and building projects.  Supports npm,
 // npx, and basic nvm/fnm for Node version management.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
 
@@ -98,8 +98,8 @@ pub fn exec_npm_manage(args: &Value, workspace_dir: &Path) -> Result<String, Str
             if is_node_installed(workspace_dir) && is_npm_installed(workspace_dir) {
                 let node_v = sh_in(workspace_dir, "node --version 2>&1")
                     .unwrap_or_else(|_| "unknown".into());
-                let npm_v = sh_in(workspace_dir, "npm --version 2>&1")
-                    .unwrap_or_else(|_| "unknown".into());
+                let npm_v =
+                    sh_in(workspace_dir, "npm --version 2>&1").unwrap_or_else(|_| "unknown".into());
                 return Ok(format!(
                     "Node.js ({}) and npm ({}) are already installed.",
                     node_v.trim(),
@@ -114,16 +114,21 @@ pub fn exec_npm_manage(args: &Value, workspace_dir: &Path) -> Result<String, Str
                     if result.is_ok() {
                         return result;
                     }
-                    sh("curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash 2>&1 && \
+                    sh(
+                        "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash 2>&1 && \
                         export NVM_DIR=\"$HOME/.nvm\" && . \"$NVM_DIR/nvm.sh\" && \
-                        nvm install --lts 2>&1")
+                        nvm install --lts 2>&1",
+                    )
                 }
-                "linux" => {
-                    sh("curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash 2>&1 && \
+                "linux" => sh(
+                    "curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash 2>&1 && \
                         export NVM_DIR=\"$HOME/.nvm\" && . \"$NVM_DIR/nvm.sh\" && \
-                        nvm install --lts 2>&1")
-                }
-                _ => Err(format!("Unsupported OS for automatic Node.js install: {}", os)),
+                        nvm install --lts 2>&1",
+                ),
+                _ => Err(format!(
+                    "Unsupported OS for automatic Node.js install: {}",
+                    os
+                )),
             }
         }
 
@@ -149,7 +154,11 @@ pub fn exec_npm_manage(args: &Value, workspace_dir: &Path) -> Result<String, Str
                 return Err("npm is not installed. Run with action 'setup' first.".into());
             }
             let yes = args.get("yes").and_then(|v| v.as_bool()).unwrap_or(true);
-            let cmd = if yes { "npm init -y 2>&1" } else { "npm init 2>&1" };
+            let cmd = if yes {
+                "npm init -y 2>&1"
+            } else {
+                "npm init 2>&1"
+            };
             sh_in(workspace_dir, cmd)
         }
 
@@ -176,11 +185,7 @@ pub fn exec_npm_manage(args: &Value, workspace_dir: &Path) -> Result<String, Str
                 cmd.push_str(&packages.join(" "));
             }
             // --save-dev flag
-            if args
-                .get("dev")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
+            if args.get("dev").and_then(|v| v.as_bool()).unwrap_or(false) {
                 cmd.push_str(" --save-dev");
             }
             // --global flag
@@ -233,10 +238,7 @@ pub fn exec_npm_manage(args: &Value, workspace_dir: &Path) -> Result<String, Str
             if !is_npm_installed(workspace_dir) {
                 return Err("npm is not installed.".into());
             }
-            let depth = args
-                .get("depth")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(0);
             let global_flag = if args
                 .get("global")
                 .and_then(|v| v.as_bool())
@@ -334,10 +336,7 @@ pub fn exec_npm_manage(args: &Value, workspace_dir: &Path) -> Result<String, Str
             if !is_npm_installed(workspace_dir) {
                 return Err("npm is not installed.".into());
             }
-            let fix = args
-                .get("fix")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let fix = args.get("fix").and_then(|v| v.as_bool()).unwrap_or(false);
             let cmd = if fix {
                 "npm audit fix 2>&1"
             } else {
@@ -383,14 +382,12 @@ pub fn exec_npm_manage(args: &Value, workspace_dir: &Path) -> Result<String, Str
             let node_installed = is_node_installed(workspace_dir);
             let npm_installed = is_npm_installed(workspace_dir);
             let node_v = if node_installed {
-                sh_in(workspace_dir, "node --version 2>&1")
-                    .unwrap_or_else(|_| "unknown".into())
+                sh_in(workspace_dir, "node --version 2>&1").unwrap_or_else(|_| "unknown".into())
             } else {
                 "not installed".into()
             };
             let npm_v = if npm_installed {
-                sh_in(workspace_dir, "npm --version 2>&1")
-                    .unwrap_or_else(|_| "unknown".into())
+                sh_in(workspace_dir, "npm --version 2>&1").unwrap_or_else(|_| "unknown".into())
             } else {
                 "not installed".into()
             };

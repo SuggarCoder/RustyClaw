@@ -11,7 +11,7 @@ use crate::messengers::{
 };
 use crate::tools;
 use anyhow::{Context, Result};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +22,10 @@ use tracing::{debug, error, info, trace, warn};
 use super::providers;
 use super::secrets_handler;
 use super::skills_handler;
-use super::{ChatMessage, MediaRef, ModelContext, ProviderRequest, SharedSkillManager, SharedVault, ToolCallResult};
+use super::{
+    ChatMessage, MediaRef, ModelContext, ProviderRequest, SharedSkillManager, SharedVault,
+    ToolCallResult,
+};
 
 #[cfg(feature = "matrix")]
 use crate::messengers::MatrixMessenger;
@@ -47,12 +50,7 @@ const MAX_TOOL_ROUNDS: usize = 25;
 const MAX_IMAGE_SIZE: usize = 10 * 1024 * 1024;
 
 /// Supported image MIME types for vision models.
-const SUPPORTED_IMAGE_TYPES: &[&str] = &[
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/webp",
-];
+const SUPPORTED_IMAGE_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /// Create a messenger manager from config.
 pub async fn create_messenger_manager(config: &Config) -> Result<MessengerManager> {
@@ -145,7 +143,10 @@ async fn create_messenger(config: &MessengerConfig) -> Result<Box<dyn Messenger>
                 .homeserver
                 .clone()
                 .context("Matrix requires 'homeserver'")?;
-            let user_id = config.user_id.clone().context("Matrix requires 'user_id'")?;
+            let user_id = config
+                .user_id
+                .clone()
+                .context("Matrix requires 'user_id'")?;
             let password = config.password.clone();
             let access_token = config.access_token.clone();
 
@@ -160,7 +161,14 @@ async fn create_messenger(config: &MessengerConfig) -> Result<Box<dyn Messenger>
                 MatrixMessenger::with_password(name.clone(), homeserver, user_id, pwd, store_path)
             } else if let Some(token) = access_token {
                 // Device ID is optional, defaults to "RUSTYCLAW" if not provided
-                MatrixMessenger::with_token(name.clone(), homeserver, user_id, token, None, store_path)
+                MatrixMessenger::with_token(
+                    name.clone(),
+                    homeserver,
+                    user_id,
+                    token,
+                    None,
+                    store_path,
+                )
             } else {
                 anyhow::bail!("Matrix requires either 'password' or 'access_token'");
             };
@@ -212,12 +220,8 @@ pub async fn run_messenger_loop(
         }
     };
 
-    let poll_interval = Duration::from_millis(
-        config
-            .messenger_poll_interval_ms
-            .unwrap_or(2000)
-            .max(500) as u64,
-    );
+    let poll_interval =
+        Duration::from_millis(config.messenger_poll_interval_ms.unwrap_or(2000).max(500) as u64);
 
     // Per-chat conversation history
     let conversations: ConversationStore = Arc::new(Mutex::new(HashMap::new()));
@@ -335,7 +339,10 @@ async fn process_incoming_message(
     // Get or create conversation history
     let mut messages = {
         let mut store = conversations.lock().await;
-        store.entry(conv_key.clone()).or_insert_with(Vec::new).clone()
+        store
+            .entry(conv_key.clone())
+            .or_insert_with(Vec::new)
+            .clone()
     };
 
     // Build system prompt
@@ -360,14 +367,20 @@ async fn process_incoming_message(
     };
 
     if !images.is_empty() {
-        debug!(image_count = images.len(), "Processing images (vision not yet supported in messenger handler)");
+        debug!(
+            image_count = images.len(),
+            "Processing images (vision not yet supported in messenger handler)"
+        );
     }
 
     // Build media refs for history storage
     let media_refs: Vec<MediaRef> = images.iter().map(|img| img.media_ref.clone()).collect();
 
     // Add user message to history (with media refs, not raw data)
-    messages.push(ChatMessage::user_with_media(&msg.content, media_refs.clone()));
+    messages.push(ChatMessage::user_with_media(
+        &msg.content,
+        media_refs.clone(),
+    ));
 
     // Build request - ProviderRequest expects Vec<ChatMessage>
     let mut resolved = ProviderRequest {
@@ -465,7 +478,10 @@ async fn process_incoming_message(
         let history = store.entry(conv_key).or_insert_with(Vec::new);
 
         // Add user message (with media refs)
-        history.push(ChatMessage::user_with_media(&msg.content, media_refs.clone()));
+        history.push(ChatMessage::user_with_media(
+            &msg.content,
+            media_refs.clone(),
+        ));
 
         // Add assistant response
         if !final_response.is_empty() {
@@ -550,9 +566,10 @@ fn is_allowed_message(config: &Config, messenger_type: &str, msg: &Message) -> b
 fn build_messenger_system_prompt(config: &Config, messenger_type: &str, msg: &Message) -> String {
     use crate::workspace_context::{SessionType, WorkspaceContext};
 
-    let base_prompt = config.system_prompt.clone().unwrap_or_else(|| {
-        "You are a helpful AI assistant.".to_string()
-    });
+    let base_prompt = config
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| "You are a helpful AI assistant.".to_string());
 
     // Determine session type based on messenger context
     // Direct messages are treated as main session, channels/groups as group session
@@ -565,10 +582,8 @@ fn build_messenger_system_prompt(config: &Config, messenger_type: &str, msg: &Me
     };
 
     // Build workspace context
-    let workspace_ctx = WorkspaceContext::with_config(
-        config.workspace_dir(),
-        config.workspace_context.clone(),
-    );
+    let workspace_ctx =
+        WorkspaceContext::with_config(config.workspace_dir(), config.workspace_context.clone());
     let workspace_prompt = workspace_ctx.build_context(session_type);
 
     // Combine base prompt, workspace context, and messaging context
@@ -644,9 +659,13 @@ async fn download_image(
     }
 
     let bytes = response.bytes().await.context("Failed to read image")?;
-    
+
     if bytes.len() > MAX_IMAGE_SIZE {
-        anyhow::bail!("Image too large: {} bytes (max {})", bytes.len(), MAX_IMAGE_SIZE);
+        anyhow::bail!(
+            "Image too large: {} bytes (max {})",
+            bytes.len(),
+            MAX_IMAGE_SIZE
+        );
     }
 
     // Build media ref
@@ -658,7 +677,7 @@ async fn download_image(
     // Cache to disk
     let ext = mime_to_extension(&content_type);
     let cache_path = cache_dir.join(format!("{}.{}", media_ref.id, ext));
-    
+
     if let Err(e) = tokio::fs::write(&cache_path, &bytes).await {
         debug!(error = %e, path = %cache_path.display(), "Failed to cache image");
     } else {
@@ -675,11 +694,15 @@ async fn download_image(
 /// Load an image from a local file path.
 async fn load_image_from_path(path: &str, cache_dir: &std::path::Path) -> Result<ImageData> {
     use tokio::fs;
-    
+
     let data = fs::read(path).await.context("Failed to read image file")?;
-    
+
     if data.len() > MAX_IMAGE_SIZE {
-        anyhow::bail!("Image too large: {} bytes (max {})", data.len(), MAX_IMAGE_SIZE);
+        anyhow::bail!(
+            "Image too large: {} bytes (max {})",
+            data.len(),
+            MAX_IMAGE_SIZE
+        );
     }
 
     // Detect MIME type from extension or magic bytes
@@ -696,7 +719,7 @@ async fn load_image_from_path(path: &str, cache_dir: &std::path::Path) -> Result
     // Copy to cache dir
     let ext = mime_to_extension(&mime_type);
     let cache_path = cache_dir.join(format!("{}.{}", media_ref.id, ext));
-    
+
     if let Err(e) = tokio::fs::write(&cache_path, &data).await {
         debug!(error = %e, path = %cache_path.display(), "Failed to cache image");
     } else {
@@ -822,7 +845,7 @@ async fn process_attachments(
 }
 
 /// Build a multi-modal user message with text and images.
-/// 
+///
 /// For OpenAI-compatible APIs, this returns a content array:
 /// ```json
 /// {
@@ -835,7 +858,7 @@ async fn process_attachments(
 /// ```
 #[allow(dead_code)]
 fn build_multimodal_user_message(text: &str, images: &[ImageData], provider: &str) -> Value {
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD};
 
     if images.is_empty() {
         // Simple text message

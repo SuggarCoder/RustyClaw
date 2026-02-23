@@ -1,14 +1,23 @@
 //! File operation tools: read, write, edit, list, search, find.
 
-use super::helpers::{resolve_path, expand_tilde, is_protected_path, display_path, should_visit, VAULT_ACCESS_DENIED};
+use super::helpers::{
+    VAULT_ACCESS_DENIED, display_path, expand_tilde, is_protected_path, resolve_path, should_visit,
+};
 use serde_json::Value;
 use std::path::Path;
 use std::process::Stdio;
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
 /// Extensions that `textutil` (macOS) can convert to plain text.
 const TEXTUTIL_EXTENSIONS: &[&str] = &[
-    "doc", "docx", "rtf", "rtfd", "odt", "wordml", "webarchive", "html",
+    "doc",
+    "docx",
+    "rtf",
+    "rtfd",
+    "odt",
+    "wordml",
+    "webarchive",
+    "html",
 ];
 
 /// Try to extract plain text from a rich document using macOS `textutil`.
@@ -182,8 +191,13 @@ pub fn exec_write_file(args: &Value, workspace_dir: &Path) -> Result<String, Str
 
     // Always create parent directories.
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directories for '{}': {}", path.display(), e))?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create directories for '{}': {}",
+                path.display(),
+                e
+            )
+        })?;
     }
 
     std::fs::write(&path, content)
@@ -227,10 +241,7 @@ pub fn exec_edit_file(args: &Value, workspace_dir: &Path) -> Result<String, Stri
     let count = content.matches(old_string).count();
     if count == 0 {
         debug!(path = %path.display(), "old_string not found");
-        return Err(format!(
-            "old_string not found in {}",
-            path.display()
-        ));
+        return Err(format!("old_string not found in {}", path.display()));
     }
     if count > 1 {
         debug!(path = %path.display(), count, "old_string found multiple times");
@@ -417,9 +428,7 @@ pub fn exec_find_files(args: &Value, workspace_dir: &Path) -> Result<String, Str
         let full_str = full.to_string_lossy();
 
         let mut results = Vec::new();
-        for entry in glob::glob(&full_str)
-            .map_err(|e| format!("Invalid glob pattern: {}", e))?
-        {
+        for entry in glob::glob(&full_str).map_err(|e| format!("Invalid glob pattern: {}", e))? {
             if results.len() >= max_results {
                 break;
             }
@@ -485,10 +494,7 @@ fn format_find_results(results: Vec<String>, max_results: usize) -> Result<Strin
         }
         output.push_str(&results.join("\n"));
         if count >= max_results {
-            output.push_str(&format!(
-                "\n\n(Results truncated at {} files)",
-                max_results
-            ));
+            output.push_str(&format!("\n\n(Results truncated at {} files)", max_results));
         }
         Ok(output)
     }

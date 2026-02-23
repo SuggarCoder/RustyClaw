@@ -3,8 +3,8 @@
 //! This module provides helpers for the gateway server to send frames to clients.
 
 use super::frames::{
-    ClientFrame, SecretEntryDto, deserialize_frame, serialize_frame, ServerFrame, ServerFrameType,
-    ServerPayload,
+    ClientFrame, SecretEntryDto, ServerFrame, ServerFrameType, ServerPayload, deserialize_frame,
+    serialize_frame,
 };
 use anyhow::Result;
 use futures_util::SinkExt;
@@ -168,11 +168,7 @@ where
 }
 
 /// Build and send a secrets_store_result frame.
-pub async fn send_secrets_store_result<S>(
-    writer: &mut S,
-    ok: bool,
-    message: &str,
-) -> Result<()>
+pub async fn send_secrets_store_result<S>(writer: &mut S, ok: bool, message: &str) -> Result<()>
 where
     S: SinkExt<Message> + Unpin,
 {
@@ -504,11 +500,7 @@ where
 }
 
 /// Build and send a user-prompt request frame (for the `ask_user` tool).
-pub async fn send_user_prompt_request<S>(
-    writer: &mut S,
-    id: &str,
-    prompt_json: &str,
-) -> Result<()>
+pub async fn send_user_prompt_request<S>(writer: &mut S, id: &str, prompt_json: &str) -> Result<()>
 where
     S: SinkExt<Message> + Unpin,
 {

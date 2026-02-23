@@ -3,14 +3,14 @@ use std::time::Instant;
 use anyhow::Result;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::*, widgets::Paragraph};
-use tui_input::{backend::crossterm::EventHandler, Input};
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 use crate::action::Action;
-use rustyclaw_core::commands::command_names;
 use crate::panes::{Pane, PaneState};
-use rustyclaw_core::types::{GatewayStatus, InputMode};
-use crate::tui_palette as tp;
 use crate::tui::{EventResponse, Frame};
+use crate::tui_palette as tp;
+use rustyclaw_core::commands::command_names;
+use rustyclaw_core::types::{GatewayStatus, InputMode};
 
 struct TimedStatusLine {
     message: String,
@@ -39,7 +39,6 @@ pub struct FooterPane {
     /// Tick counter for spinner animation
     spinner_tick: usize,
 }
-
 
 impl FooterPane {
     pub fn new() -> Self {
@@ -343,7 +342,9 @@ impl Pane for FooterPane {
         // Completion popup — rendered on top of the body area, just above the footer
         if self.show_completions && !self.completions.is_empty() {
             // Determine width from the longest entry (min 30, capped by terminal)
-            let max_entry_w = self.completions.iter()
+            let max_entry_w = self
+                .completions
+                .iter()
                 .map(|c| c.len() + 4) // " /cmd "
                 .max()
                 .unwrap_or(30);
@@ -373,10 +374,7 @@ impl Pane for FooterPane {
             };
 
             // Clear background
-            frame.render_widget(
-                ratatui::widgets::Clear,
-                popup_area,
-            );
+            frame.render_widget(ratatui::widgets::Clear, popup_area);
 
             let items: Vec<Line> = self
                 .completions
@@ -400,8 +398,7 @@ impl Pane for FooterPane {
             frame.render_widget(
                 Paragraph::new(items)
                     .block(
-                        ratatui::widgets::Block::default()
-                            .borders(ratatui::widgets::Borders::NONE),
+                        ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::NONE),
                     )
                     .style(tp::popup_bg()),
                 popup_area,
@@ -442,26 +439,16 @@ impl FooterPane {
 
         // Gateway status indicator (right-aligned)
         let (status_icon, status_label, status_style) = match state.gateway_status {
-            GatewayStatus::Connected => (
-                "● ",
-                "connected ",
-                Style::default().fg(tp::SUCCESS),
-            ),
+            GatewayStatus::Connected => ("● ", "connected ", Style::default().fg(tp::SUCCESS)),
             GatewayStatus::ModelReady => (
                 "● ",
                 "model ready ",
-                Style::default().fg(tp::SUCCESS).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(tp::SUCCESS)
+                    .add_modifier(Modifier::BOLD),
             ),
-            GatewayStatus::Connecting => (
-                "◌ ",
-                "connecting… ",
-                Style::default().fg(tp::WARN),
-            ),
-            GatewayStatus::Disconnected => (
-                "○ ",
-                "disconnected ",
-                Style::default().fg(tp::ERROR),
-            ),
+            GatewayStatus::Connecting => ("◌ ", "connecting… ", Style::default().fg(tp::WARN)),
+            GatewayStatus::Disconnected => ("○ ", "disconnected ", Style::default().fg(tp::ERROR)),
             GatewayStatus::ModelError => (
                 "✖ ",
                 "model error ",
@@ -472,11 +459,7 @@ impl FooterPane {
                 "error ",
                 Style::default().fg(tp::ERROR).add_modifier(Modifier::BOLD),
             ),
-            GatewayStatus::Unconfigured => (
-                "○ ",
-                "no gateway ",
-                Style::default().fg(tp::MUTED),
-            ),
+            GatewayStatus::Unconfigured => ("○ ", "no gateway ", Style::default().fg(tp::MUTED)),
             GatewayStatus::VaultLocked => (
                 "🔒 ",
                 "vault locked ",
@@ -502,10 +485,7 @@ impl FooterPane {
             width: area.width.saturating_sub(status_width),
             height: 1,
         };
-        let line = Line::from(vec![
-            prefix,
-            Span::raw(&input_text[scroll..]),
-        ]);
+        let line = Line::from(vec![prefix, Span::raw(&input_text[scroll..])]);
         frame.render_widget(Paragraph::new(line), input_area);
 
         // Right side: gateway status

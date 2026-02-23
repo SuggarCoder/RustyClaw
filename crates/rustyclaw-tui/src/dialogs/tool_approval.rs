@@ -4,11 +4,11 @@
 //! the specific tool invocation.
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::action::Action;
 use crate::tui_palette as tp;
@@ -38,33 +38,26 @@ impl ToolApprovalState {
 
 /// Handle a key event for the tool approval dialog.
 /// Returns Some(Action) if the dialog should close with a response.
-pub fn handle_tool_approval_key(
-    state: &mut ToolApprovalState,
-    key: KeyEvent,
-) -> Option<Action> {
+pub fn handle_tool_approval_key(state: &mut ToolApprovalState, key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::Char('h') | KeyCode::Char('l') => {
             state.selected_allow = !state.selected_allow;
             None
         }
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
-            Some(Action::ToolApprovalResponse {
-                id: state.id.clone(),
-                approved: true,
-            })
-        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => Some(Action::ToolApprovalResponse {
+            id: state.id.clone(),
+            approved: true,
+        }),
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
             Some(Action::ToolApprovalResponse {
                 id: state.id.clone(),
                 approved: false,
             })
         }
-        KeyCode::Enter => {
-            Some(Action::ToolApprovalResponse {
-                id: state.id.clone(),
-                approved: state.selected_allow,
-            })
-        }
+        KeyCode::Enter => Some(Action::ToolApprovalResponse {
+            id: state.id.clone(),
+            approved: state.selected_allow,
+        }),
         _ => None,
     }
 }
@@ -93,7 +86,7 @@ pub fn draw_tool_approval(f: &mut Frame, state: &ToolApprovalState) {
     let chunks = Layout::vertical([
         Constraint::Length(2), // Tool name
         Constraint::Length(1), // Separator
-        Constraint::Min(4),   // Arguments
+        Constraint::Min(4),    // Arguments
         Constraint::Length(1), // Separator
         Constraint::Length(1), // Buttons
         Constraint::Length(1), // Hint
@@ -103,15 +96,23 @@ pub fn draw_tool_approval(f: &mut Frame, state: &ToolApprovalState) {
     // Tool name
     let name_line = Line::from(vec![
         Span::styled("Tool: ", Style::default().fg(Color::Gray)),
-        Span::styled(&state.name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            &state.name,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]);
-    f.render_widget(Paragraph::new(vec![
-        name_line,
-        Line::from(Span::styled(
-            "This tool requires your approval to run.",
-            Style::default().fg(Color::Yellow),
-        )),
-    ]), chunks[0]);
+    f.render_widget(
+        Paragraph::new(vec![
+            name_line,
+            Line::from(Span::styled(
+                "This tool requires your approval to run.",
+                Style::default().fg(Color::Yellow),
+            )),
+        ]),
+        chunks[0],
+    );
 
     // Arguments preview
     let args_str = serde_json::to_string_pretty(&state.arguments)
@@ -128,12 +129,18 @@ pub fn draw_tool_approval(f: &mut Frame, state: &ToolApprovalState) {
 
     // Buttons
     let allow_style = if state.selected_allow {
-        Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Green)
     };
     let deny_style = if !state.selected_allow {
-        Style::default().fg(Color::Black).bg(Color::Red).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Red)
     };

@@ -1,12 +1,12 @@
 //! System-level tools: disk analysis, monitoring, app management,
 //! GUI automation, security auditing, and file summarization.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
-use super::helpers::{resolve_path, expand_tilde};
+use super::helpers::{expand_tilde, resolve_path};
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -45,18 +45,9 @@ fn sh(script: &str) -> Result<String, String> {
 /// Scan disk usage for a directory tree, returning the largest entries.
 #[instrument(skip(args, workspace_dir))]
 pub fn exec_disk_usage(args: &Value, workspace_dir: &Path) -> Result<String, String> {
-    let path_str = args
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("~");
-    let depth = args
-        .get("depth")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1) as usize;
-    let top_n = args
-        .get("top")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(20) as usize;
+    let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("~");
+    let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+    let top_n = args.get("top").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
     debug!(path = path_str, depth, top_n, "Disk usage scan");
 
@@ -137,8 +128,8 @@ pub fn exec_classify_files(args: &Value, workspace_dir: &Path) -> Result<String,
     let mut categories: std::collections::HashMap<&str, Vec<String>> =
         std::collections::HashMap::new();
 
-    let entries = std::fs::read_dir(&target)
-        .map_err(|e| format!("Cannot read directory: {}", e))?;
+    let entries =
+        std::fs::read_dir(&target).map_err(|e| format!("Cannot read directory: {}", e))?;
 
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -147,10 +138,7 @@ pub fn exec_classify_files(args: &Value, workspace_dir: &Path) -> Result<String,
     }
 
     let mut result = serde_json::Map::new();
-    result.insert(
-        "path".into(),
-        json!(target.display().to_string()),
-    );
+    result.insert("path".into(), json!(target.display().to_string()));
     for (cat, files) in &categories {
         result.insert(cat.to_string(), json!(files));
     }
@@ -244,10 +232,7 @@ fn classify_entry(name: &str, path: &Path) -> &'static str {
 /// Return current CPU, memory, and top-process information.
 #[instrument(skip(args, _workspace_dir))]
 pub fn exec_system_monitor(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
-    let metric = args
-        .get("metric")
-        .and_then(|v| v.as_str())
-        .unwrap_or("all");
+    let metric = args.get("metric").and_then(|v| v.as_str()).unwrap_or("all");
 
     debug!(metric, "System monitor request");
 
@@ -260,26 +245,19 @@ pub fn exec_system_monitor(args: &Value, _workspace_dir: &Path) -> Result<String
         result.insert("load_average".into(), json!(load.trim()));
 
         // Top CPU consumers
-        let top_cpu = sh(
-            "ps aux --sort=-%cpu 2>/dev/null | head -11 || ps aux -r | head -11"
-        )
-        .unwrap_or_default();
+        let top_cpu = sh("ps aux --sort=-%cpu 2>/dev/null | head -11 || ps aux -r | head -11")
+            .unwrap_or_default();
         result.insert("top_cpu_processes".into(), json!(top_cpu.trim()));
     }
 
     if metric == "all" || metric == "memory" {
         // macOS memory pressure
-        let mem = sh(
-            "vm_stat 2>/dev/null | head -10 || free -h 2>/dev/null"
-        )
-        .unwrap_or_default();
+        let mem = sh("vm_stat 2>/dev/null | head -10 || free -h 2>/dev/null").unwrap_or_default();
         result.insert("memory".into(), json!(mem.trim()));
 
         // Top memory consumers
-        let top_mem = sh(
-            "ps aux --sort=-%mem 2>/dev/null | head -11 || ps aux -m | head -11"
-        )
-        .unwrap_or_default();
+        let top_mem = sh("ps aux --sort=-%mem 2>/dev/null | head -11 || ps aux -m | head -11")
+            .unwrap_or_default();
         result.insert("top_memory_processes".into(), json!(top_mem.trim()));
     }
 
@@ -289,10 +267,8 @@ pub fn exec_system_monitor(args: &Value, _workspace_dir: &Path) -> Result<String
     }
 
     if metric == "all" || metric == "network" {
-        let net = sh(
-            "netstat -ib 2>/dev/null | head -5 || ip -s link 2>/dev/null | head -20"
-        )
-        .unwrap_or_default();
+        let net = sh("netstat -ib 2>/dev/null | head -5 || ip -s link 2>/dev/null | head -20")
+            .unwrap_or_default();
         result.insert("network".into(), json!(net.trim()));
     }
 
@@ -305,19 +281,15 @@ pub fn exec_system_monitor(args: &Value, _workspace_dir: &Path) -> Result<String
 pub fn exec_battery_health(_args: &Value, _workspace_dir: &Path) -> Result<String, String> {
     // macOS: pmset + ioreg
     let pmset = sh("pmset -g batt 2>/dev/null").unwrap_or_default();
-    let ioreg = sh(
-        "ioreg -r -c AppleSmartBattery 2>/dev/null | \
+    let ioreg = sh("ioreg -r -c AppleSmartBattery 2>/dev/null | \
          grep -E '(CycleCount|MaxCapacity|DesignCapacity|Temperature|FullyCharged|IsCharging)' | \
-         head -10"
-    )
+         head -10")
     .unwrap_or_default();
 
     // Linux fallback: /sys/class/power_supply
-    let linux = sh(
-        "cat /sys/class/power_supply/BAT0/status 2>/dev/null && \
+    let linux = sh("cat /sys/class/power_supply/BAT0/status 2>/dev/null && \
          cat /sys/class/power_supply/BAT0/capacity 2>/dev/null && \
-         cat /sys/class/power_supply/BAT0/cycle_count 2>/dev/null"
-    )
+         cat /sys/class/power_supply/BAT0/cycle_count 2>/dev/null")
     .unwrap_or_default();
 
     if pmset.trim().is_empty() && linux.trim().is_empty() {
@@ -347,23 +319,14 @@ pub fn exec_battery_health(_args: &Value, _workspace_dir: &Path) -> Result<Strin
 
 /// List installed applications with size, version, and source.
 pub fn exec_app_index(args: &Value, _workspace_dir: &Path) -> Result<String, String> {
-    let filter = args
-        .get("filter")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let sort_by = args
-        .get("sort")
-        .and_then(|v| v.as_str())
-        .unwrap_or("size");
+    let filter = args.get("filter").and_then(|v| v.as_str()).unwrap_or("");
+    let sort_by = args.get("sort").and_then(|v| v.as_str()).unwrap_or("size");
 
     // macOS: scan /Applications, also check Homebrew
     let mut apps = Vec::new();
 
     // Native macOS apps
-    let app_list = sh(
-        "ls -1 /Applications 2>/dev/null | grep '.app$'"
-    )
-    .unwrap_or_default();
+    let app_list = sh("ls -1 /Applications 2>/dev/null | grep '.app$'").unwrap_or_default();
 
     for name in app_list.lines() {
         let trimmed = name.trim();
@@ -405,8 +368,11 @@ pub fn exec_app_index(args: &Value, _workspace_dir: &Path) -> Result<String, Str
         if !filter.is_empty() && !trimmed.to_lowercase().contains(&filter.to_lowercase()) {
             continue;
         }
-        let info = sh(&format!("brew info --cask --json=v2 '{}' 2>/dev/null | head -200", trimmed))
-            .unwrap_or_default();
+        let info = sh(&format!(
+            "brew info --cask --json=v2 '{}' 2>/dev/null | head -200",
+            trimmed
+        ))
+        .unwrap_or_default();
         apps.push(json!({
             "name": trimmed,
             "source": "homebrew",
@@ -452,18 +418,30 @@ pub fn exec_cloud_browse(args: &Value, _workspace_dir: &Path) -> Result<String, 
             let home = expand_tilde("~");
             let candidates = vec![
                 ("Google Drive", home.join("Google Drive")),
-                ("Google Drive (Stream)", home.join("Library/CloudStorage/GoogleDrive")),
+                (
+                    "Google Drive (Stream)",
+                    home.join("Library/CloudStorage/GoogleDrive"),
+                ),
                 ("Dropbox", home.join("Dropbox")),
                 ("OneDrive", home.join("OneDrive")),
-                ("OneDrive (Business)", home.join("Library/CloudStorage/OneDrive")),
-                ("iCloud Drive", home.join("Library/Mobile Documents/com~apple~CloudDocs")),
+                (
+                    "OneDrive (Business)",
+                    home.join("Library/CloudStorage/OneDrive"),
+                ),
+                (
+                    "iCloud Drive",
+                    home.join("Library/Mobile Documents/com~apple~CloudDocs"),
+                ),
             ];
 
             let mut found = Vec::new();
             for (label, path) in &candidates {
                 if path.exists() {
-                    let size = sh(&format!("du -sk '{}' 2>/dev/null | cut -f1", path.display()))
-                        .unwrap_or_default();
+                    let size = sh(&format!(
+                        "du -sk '{}' 2>/dev/null | cut -f1",
+                        path.display()
+                    ))
+                    .unwrap_or_default();
                     let kb: u64 = size.trim().parse().unwrap_or(0);
                     found.push(json!({
                         "provider": label,
@@ -496,7 +474,10 @@ pub fn exec_cloud_browse(args: &Value, _workspace_dir: &Path) -> Result<String, 
             })
             .to_string())
         }
-        _ => Err(format!("Unknown action: {}. Use 'detect' or 'list'.", action)),
+        _ => Err(format!(
+            "Unknown action: {}. Use 'detect' or 'list'.",
+            action
+        )),
     }
 }
 
@@ -547,9 +528,7 @@ pub fn exec_browser_cache(args: &Value, _workspace_dir: &Path) -> Result<String,
         ),
         (
             "Arc",
-            vec![
-                home.join("Library/Caches/company.thebrowser.Browser"),
-            ],
+            vec![home.join("Library/Caches/company.thebrowser.Browser")],
         ),
     ];
 
@@ -565,9 +544,8 @@ pub fn exec_browser_cache(args: &Value, _workspace_dir: &Path) -> Result<String,
                 }
                 for p in paths {
                     if p.exists() {
-                        let size =
-                            sh(&format!("du -sk '{}' 2>/dev/null | cut -f1", p.display()))
-                                .unwrap_or_default();
+                        let size = sh(&format!("du -sk '{}' 2>/dev/null | cut -f1", p.display()))
+                            .unwrap_or_default();
                         let kb: u64 = size.trim().parse().unwrap_or(0);
                         if kb > 0 {
                             results.push(json!({
@@ -582,8 +560,11 @@ pub fn exec_browser_cache(args: &Value, _workspace_dir: &Path) -> Result<String,
             }
 
             // Downloads folder
-            let dl_size = sh(&format!("du -sk '{}' 2>/dev/null | cut -f1", downloads.display()))
-                .unwrap_or_default();
+            let dl_size = sh(&format!(
+                "du -sk '{}' 2>/dev/null | cut -f1",
+                downloads.display()
+            ))
+            .unwrap_or_default();
             let dl_kb: u64 = dl_size.trim().parse().unwrap_or(0);
 
             Ok(json!({
@@ -607,8 +588,11 @@ pub fn exec_browser_cache(args: &Value, _workspace_dir: &Path) -> Result<String,
                     if p.exists() {
                         let before = sh(&format!("du -sk '{}' 2>/dev/null | cut -f1", p.display()))
                             .unwrap_or_default();
-                        let _ = sh(&format!("rm -rf '{}'/Cache* '{}'/data_* 2>/dev/null",
-                            p.display(), p.display()));
+                        let _ = sh(&format!(
+                            "rm -rf '{}'/Cache* '{}'/data_* 2>/dev/null",
+                            p.display(),
+                            p.display()
+                        ));
                         cleaned.push(json!({
                             "browser": name,
                             "path": p.display().to_string(),
@@ -621,7 +605,10 @@ pub fn exec_browser_cache(args: &Value, _workspace_dir: &Path) -> Result<String,
             }
             Ok(json!({ "cleaned": cleaned }).to_string())
         }
-        _ => Err(format!("Unknown action: {}. Use 'scan' or 'clean'.", action)),
+        _ => Err(format!(
+            "Unknown action: {}. Use 'scan' or 'clean'.",
+            action
+        )),
     }
 }
 
@@ -670,7 +657,12 @@ pub fn exec_screenshot(args: &Value, workspace_dir: &Path) -> Result<String, Str
                 .arg(target.display().to_string())
                 .output()
         })
-        .map_err(|e| format!("Screenshot failed: {}. Install screencapture (macOS) or imagemagick (Linux).", e))?;
+        .map_err(|e| {
+            format!(
+                "Screenshot failed: {}. Install screencapture (macOS) or imagemagick (Linux).",
+                e
+            )
+        })?;
 
     if output.status.success() && target.exists() {
         let meta = std::fs::metadata(&target).ok();
@@ -742,7 +734,10 @@ pub fn exec_clipboard(args: &Value, _workspace_dir: &Path) -> Result<String, Str
                 Err("Clipboard write failed. No clipboard provider found.".to_string())
             }
         }
-        _ => Err(format!("Unknown action: {}. Use 'read' or 'write'.", action)),
+        _ => Err(format!(
+            "Unknown action: {}. Use 'read' or 'write'.",
+            action
+        )),
     }
 }
 
@@ -751,10 +746,7 @@ pub fn exec_clipboard(args: &Value, _workspace_dir: &Path) -> Result<String, Str
 /// Scan files for potentially sensitive data patterns.
 #[instrument(skip(args, workspace_dir))]
 pub fn exec_audit_sensitive(args: &Value, workspace_dir: &Path) -> Result<String, String> {
-    let path_str = args
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or(".");
+    let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
     let max_files = args
         .get("max_files")
         .and_then(|v| v.as_u64())
@@ -771,12 +763,27 @@ pub fn exec_audit_sensitive(args: &Value, workspace_dir: &Path) -> Result<String
     // Patterns to look for (each: label, grep -E pattern)
     let patterns: Vec<(&str, &str)> = vec![
         ("AWS Access Key", r"AKIA[0-9A-Z]{16}"),
-        ("AWS Secret Key", r"(?i)aws[_-]?secret[_-]?access[_-]?key.*[=:]\s*[A-Za-z0-9/+=]{40}"),
-        ("Private Key Header", r"-----BEGIN (RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----"),
+        (
+            "AWS Secret Key",
+            r"(?i)aws[_-]?secret[_-]?access[_-]?key.*[=:]\s*[A-Za-z0-9/+=]{40}",
+        ),
+        (
+            "Private Key Header",
+            r"-----BEGIN (RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----",
+        ),
         ("GitHub Token", r"gh[ps]_[A-Za-z0-9_]{36,}"),
-        ("Generic API Key", r#"(?i)(api[_-]?key|apikey|secret[_-]?key)\s*[=:"]\s*[A-Za-z0-9_\-]{20,}"#),
-        ("Password Assignment", r#"(?i)(password|passwd|pwd)\s*[=:"]\s*[^\s]{8,}"#),
-        ("JWT Token", r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
+        (
+            "Generic API Key",
+            r#"(?i)(api[_-]?key|apikey|secret[_-]?key)\s*[=:"]\s*[A-Za-z0-9_\-]{20,}"#,
+        ),
+        (
+            "Password Assignment",
+            r#"(?i)(password|passwd|pwd)\s*[=:"]\s*[^\s]{8,}"#,
+        ),
+        (
+            "JWT Token",
+            r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+        ),
         ("Slack Token", r"xox[bpras]-[A-Za-z0-9-]{10,}"),
     ];
 
@@ -862,10 +869,10 @@ fn walkdir_limited(root: &Path, max: usize) -> Vec<std::path::PathBuf> {
                 // Only text-ish files
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                     match ext {
-                        "rs" | "py" | "js" | "ts" | "json" | "toml" | "yaml" | "yml"
-                        | "env" | "cfg" | "conf" | "ini" | "sh" | "bash" | "zsh"
-                        | "txt" | "md" | "go" | "java" | "rb" | "php" | "xml"
-                        | "properties" | "tf" | "tfvars" | "hcl" => {
+                        "rs" | "py" | "js" | "ts" | "json" | "toml" | "yaml" | "yml" | "env"
+                        | "cfg" | "conf" | "ini" | "sh" | "bash" | "zsh" | "txt" | "md" | "go"
+                        | "java" | "rb" | "php" | "xml" | "properties" | "tf" | "tfvars"
+                        | "hcl" => {
                             files.push(path);
                         }
                         _ => {}
@@ -898,10 +905,7 @@ pub fn exec_secure_delete(args: &Value, workspace_dir: &Path) -> Result<String, 
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: path".to_string())?;
-    let passes = args
-        .get("passes")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(3);
+    let passes = args.get("passes").and_then(|v| v.as_u64()).unwrap_or(3);
     let confirm = args
         .get("confirm")
         .and_then(|v| v.as_bool())
@@ -923,7 +927,9 @@ pub fn exec_secure_delete(args: &Value, workspace_dir: &Path) -> Result<String, 
     }
 
     // Safety check: refuse to delete critical paths
-    let critical = ["/", "/Users", "/home", "/System", "/Library", "/bin", "/usr"];
+    let critical = [
+        "/", "/Users", "/home", "/System", "/Library", "/bin", "/usr",
+    ];
     let target_str = target.display().to_string();
     for c in &critical {
         if target_str == *c || target_str.starts_with(&format!("{}/.", c)) {
@@ -937,8 +943,11 @@ pub fn exec_secure_delete(args: &Value, workspace_dir: &Path) -> Result<String, 
                 .map(|m| human_size(m.len()))
                 .unwrap_or_default()
         } else {
-            let s = sh(&format!("du -sk '{}' 2>/dev/null | cut -f1", target.display()))
-                .unwrap_or_default();
+            let s = sh(&format!(
+                "du -sk '{}' 2>/dev/null | cut -f1",
+                target.display()
+            ))
+            .unwrap_or_default();
             human_size(s.trim().parse::<u64>().unwrap_or(0) * 1024)
         };
         return Ok(json!({
@@ -954,9 +963,7 @@ pub fn exec_secure_delete(args: &Value, workspace_dir: &Path) -> Result<String, 
     // Perform secure deletion
     if target.is_file() {
         // Overwrite with random data
-        let len = std::fs::metadata(&target)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let len = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
         for _ in 0..passes {
             let _ = sh(&format!(
                 "dd if=/dev/urandom of='{}' bs=1 count={} conv=notrunc 2>/dev/null",
@@ -971,8 +978,7 @@ pub fn exec_secure_delete(args: &Value, workspace_dir: &Path) -> Result<String, 
             len
         ));
         // Remove
-        std::fs::remove_file(&target)
-            .map_err(|e| format!("Failed to remove file: {}", e))?;
+        std::fs::remove_file(&target).map_err(|e| format!("Failed to remove file: {}", e))?;
 
         Ok(json!({
             "status": "deleted",
@@ -983,10 +989,7 @@ pub fn exec_secure_delete(args: &Value, workspace_dir: &Path) -> Result<String, 
         .to_string())
     } else {
         // For directories, use srm if available, else manual
-        let result = sh(&format!(
-            "srm -rzf '{}' 2>/dev/null",
-            target.display()
-        ));
+        let result = sh(&format!("srm -rzf '{}' 2>/dev/null", target.display()));
         if result.is_ok() && !target.exists() {
             Ok(json!({
                 "status": "deleted",
@@ -1029,10 +1032,7 @@ pub fn exec_summarize_file(args: &Value, workspace_dir: &Path) -> Result<String,
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: path".to_string())?;
-    let max_lines = args
-        .get("max_lines")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
+    let max_lines = args.get("max_lines").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
     let target = if path_str.starts_with('~') || path_str.starts_with('/') {
         expand_tilde(path_str)
@@ -1044,8 +1044,7 @@ pub fn exec_summarize_file(args: &Value, workspace_dir: &Path) -> Result<String,
         return Err(format!("File does not exist: {}", target.display()));
     }
 
-    let meta = std::fs::metadata(&target)
-        .map_err(|e| format!("Cannot stat file: {}", e))?;
+    let meta = std::fs::metadata(&target).map_err(|e| format!("Cannot stat file: {}", e))?;
     let size = human_size(meta.len());
 
     let ext = target
@@ -1069,10 +1068,9 @@ pub fn exec_summarize_file(args: &Value, workspace_dir: &Path) -> Result<String,
     // Type-specific summaries
     match ext.as_str() {
         // Text files — head + tail + line count
-        "rs" | "py" | "js" | "ts" | "go" | "java" | "c" | "cpp" | "h" | "rb"
-        | "php" | "sh" | "bash" | "zsh" | "txt" | "md" | "toml" | "yaml"
-        | "yml" | "json" | "xml" | "html" | "css" | "sql" | "csv" | "log"
-        | "cfg" | "conf" | "ini" => {
+        "rs" | "py" | "js" | "ts" | "go" | "java" | "c" | "cpp" | "h" | "rb" | "php" | "sh"
+        | "bash" | "zsh" | "txt" | "md" | "toml" | "yaml" | "yml" | "json" | "xml" | "html"
+        | "css" | "sql" | "csv" | "log" | "cfg" | "conf" | "ini" => {
             let content = std::fs::read_to_string(&target).unwrap_or_default();
             let total_lines = content.lines().count();
             let head: Vec<&str> = content.lines().take(max_lines).collect();
@@ -1082,7 +1080,14 @@ pub fn exec_summarize_file(args: &Value, workspace_dir: &Path) -> Result<String,
                 0
             };
             let tail: Vec<&str> = if tail_n > 0 {
-                content.lines().rev().take(tail_n).collect::<Vec<_>>().into_iter().rev().collect()
+                content
+                    .lines()
+                    .rev()
+                    .take(tail_n)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect()
             } else {
                 vec![]
             };
@@ -1095,7 +1100,10 @@ pub fn exec_summarize_file(args: &Value, workspace_dir: &Path) -> Result<String,
             }
 
             // For code files: extract top-level definitions
-            if matches!(ext.as_str(), "rs" | "py" | "js" | "ts" | "go" | "java" | "rb") {
+            if matches!(
+                ext.as_str(),
+                "rs" | "py" | "js" | "ts" | "go" | "java" | "rb"
+            ) {
                 let defs: Vec<&str> = content
                     .lines()
                     .filter(|l| {
@@ -1129,9 +1137,11 @@ pub fn exec_summarize_file(args: &Value, workspace_dir: &Path) -> Result<String,
         // PDF — page count + first page text
         "pdf" => {
             result.insert("type".into(), json!("pdf"));
-            let page_count =
-                sh(&format!("mdls -name kMDItemNumberOfPages -raw '{}' 2>/dev/null", target.display()))
-                    .unwrap_or_default();
+            let page_count = sh(&format!(
+                "mdls -name kMDItemNumberOfPages -raw '{}' 2>/dev/null",
+                target.display()
+            ))
+            .unwrap_or_default();
             if !page_count.trim().is_empty() && page_count.trim() != "(null)" {
                 result.insert("pages".into(), json!(page_count.trim()));
             }
@@ -1194,11 +1204,26 @@ pub fn exec_summarize_file(args: &Value, workspace_dir: &Path) -> Result<String,
         "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" => {
             result.insert("type".into(), json!("archive"));
             let listing = match ext.as_str() {
-                "zip" => sh(&format!("unzip -l '{}' 2>/dev/null | tail -n +4 | head -30", target.display())),
-                "tar" => sh(&format!("tar tf '{}' 2>/dev/null | head -30", target.display())),
-                "gz" => sh(&format!("tar tzf '{}' 2>/dev/null | head -30", target.display())),
-                "bz2" => sh(&format!("tar tjf '{}' 2>/dev/null | head -30", target.display())),
-                "xz" => sh(&format!("tar tJf '{}' 2>/dev/null | head -30", target.display())),
+                "zip" => sh(&format!(
+                    "unzip -l '{}' 2>/dev/null | tail -n +4 | head -30",
+                    target.display()
+                )),
+                "tar" => sh(&format!(
+                    "tar tf '{}' 2>/dev/null | head -30",
+                    target.display()
+                )),
+                "gz" => sh(&format!(
+                    "tar tzf '{}' 2>/dev/null | head -30",
+                    target.display()
+                )),
+                "bz2" => sh(&format!(
+                    "tar tjf '{}' 2>/dev/null | head -30",
+                    target.display()
+                )),
+                "xz" => sh(&format!(
+                    "tar tJf '{}' 2>/dev/null | head -30",
+                    target.display()
+                )),
                 _ => Ok(String::new()),
             }
             .unwrap_or_default();
@@ -1210,8 +1235,11 @@ pub fn exec_summarize_file(args: &Value, workspace_dir: &Path) -> Result<String,
         _ => {
             result.insert("type".into(), json!("unknown"));
             // Try file command for MIME type
-            let mime = sh(&format!("file -b --mime-type '{}' 2>/dev/null", target.display()))
-                .unwrap_or_default();
+            let mime = sh(&format!(
+                "file -b --mime-type '{}' 2>/dev/null",
+                target.display()
+            ))
+            .unwrap_or_default();
             result.insert("mime".into(), json!(mime.trim()));
         }
     }

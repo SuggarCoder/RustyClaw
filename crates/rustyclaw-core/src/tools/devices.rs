@@ -8,10 +8,10 @@
 //!
 //! The canvas tool opens URLs in the system browser and captures page content.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
 /// Discover and control paired nodes via SSH, ADB, VNC, or RDP.
 ///
@@ -124,7 +124,11 @@ fn get_command_array(args: &Value) -> Result<Vec<String>, String> {
     let command = args
         .get("command")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
 
     if command.is_empty() {
@@ -135,16 +139,32 @@ fn get_command_array(args: &Value) -> Result<Vec<String>, String> {
 
 /// Determine node type from identifier.
 enum NodeType {
-    Ssh { user: String, host: String, port: u16 },
-    Adb { device: String },
-    Vnc { host: String, port: u16, password: Option<String> },
-    Rdp { user: Option<String>, host: String, port: u16 },
+    Ssh {
+        user: String,
+        host: String,
+        port: u16,
+    },
+    Adb {
+        device: String,
+    },
+    Vnc {
+        host: String,
+        port: u16,
+        password: Option<String>,
+    },
+    Rdp {
+        user: Option<String>,
+        host: String,
+        port: u16,
+    },
 }
 
 fn parse_node(node: &str) -> NodeType {
     // Check for explicit prefix
     if node.starts_with("adb:") {
-        return NodeType::Adb { device: node[4..].to_string() };
+        return NodeType::Adb {
+            device: node[4..].to_string(),
+        };
     }
     if let Some(rest) = node.strip_prefix("ssh:") {
         return parse_ssh_target(rest);
@@ -162,13 +182,15 @@ fn parse_node(node: &str) -> NodeType {
     }
 
     // Default to ADB for device-serial-like strings
-    NodeType::Adb { device: node.to_string() }
+    NodeType::Adb {
+        device: node.to_string(),
+    }
 }
 
 fn parse_ssh_target(target: &str) -> NodeType {
     // Parse user@host:port or user@host
     let (user_host, port) = if let Some(idx) = target.rfind(':') {
-        if let Ok(p) = target[idx+1..].parse::<u16>() {
+        if let Ok(p) = target[idx + 1..].parse::<u16>() {
             (&target[..idx], p)
         } else {
             (target, 22)
@@ -178,7 +200,10 @@ fn parse_ssh_target(target: &str) -> NodeType {
     };
 
     let (user, host) = if let Some(idx) = user_host.find('@') {
-        (user_host[..idx].to_string(), user_host[idx+1..].to_string())
+        (
+            user_host[..idx].to_string(),
+            user_host[idx + 1..].to_string(),
+        )
     } else {
         ("root".to_string(), user_host.to_string())
     };
@@ -189,7 +214,7 @@ fn parse_ssh_target(target: &str) -> NodeType {
 /// Parse VNC target: host:display or host:port (port > 99 = raw port)
 fn parse_vnc_target(target: &str) -> NodeType {
     let (host, port) = if let Some(idx) = target.rfind(':') {
-        if let Ok(p) = target[idx+1..].parse::<u16>() {
+        if let Ok(p) = target[idx + 1..].parse::<u16>() {
             // If port > 99, use as-is; otherwise treat as display number
             let actual_port = if p > 99 { p } else { 5900 + p };
             (target[..idx].to_string(), actual_port)
@@ -200,13 +225,17 @@ fn parse_vnc_target(target: &str) -> NodeType {
         (target.to_string(), 5900)
     };
 
-    NodeType::Vnc { host, port, password: None }
+    NodeType::Vnc {
+        host,
+        port,
+        password: None,
+    }
 }
 
 /// Parse RDP target: user@host:port or host:port or just host
 fn parse_rdp_target(target: &str) -> NodeType {
     let (user_host, port) = if let Some(idx) = target.rfind(':') {
-        if let Ok(p) = target[idx+1..].parse::<u16>() {
+        if let Ok(p) = target[idx + 1..].parse::<u16>() {
             (&target[..idx], p)
         } else {
             (target, 3389)
@@ -216,7 +245,10 @@ fn parse_rdp_target(target: &str) -> NodeType {
     };
 
     let (user, host) = if let Some(idx) = user_host.find('@') {
-        (Some(user_host[..idx].to_string()), user_host[idx+1..].to_string())
+        (
+            Some(user_host[..idx].to_string()),
+            user_host[idx + 1..].to_string(),
+        )
     } else {
         (None, user_host.to_string())
     };
@@ -236,7 +268,8 @@ fn node_status() -> Result<String, String> {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2 && parts[1] == "device" {
                     let device_id = parts[0];
-                    let model = parts.iter()
+                    let model = parts
+                        .iter()
                         .find(|p| p.starts_with("model:"))
                         .map(|p| &p[6..])
                         .unwrap_or("unknown");
@@ -253,7 +286,9 @@ fn node_status() -> Result<String, String> {
     }
 
     // Check SSH config for known hosts
-    if let Ok(config) = std::fs::read_to_string(dirs::home_dir().unwrap_or_default().join(".ssh/config")) {
+    if let Ok(config) =
+        std::fs::read_to_string(dirs::home_dir().unwrap_or_default().join(".ssh/config"))
+    {
         let mut current_host: Option<String> = None;
         let mut current_user: Option<String> = None;
         let mut current_hostname: Option<String> = None;
@@ -332,7 +367,8 @@ fn node_status() -> Result<String, String> {
             "vnc": "vnc:host:display (display 0-99) or vnc:host:port (port > 99)",
             "rdp": "rdp:user@host:port or rdp:host"
         }
-    }).to_string())
+    })
+    .to_string())
 }
 
 /// Get details about a specific node.
@@ -342,11 +378,14 @@ fn node_describe(node: &str) -> Result<String, String> {
             // Try to get system info via SSH
             let output = Command::new("ssh")
                 .args([
-                    "-o", "ConnectTimeout=5",
-                    "-o", "BatchMode=yes",
-                    "-p", &port.to_string(),
+                    "-o",
+                    "ConnectTimeout=5",
+                    "-o",
+                    "BatchMode=yes",
+                    "-p",
+                    &port.to_string(),
                     &format!("{}@{}", user, host),
-                    "uname -a && hostname && uptime"
+                    "uname -a && hostname && uptime",
                 ])
                 .output();
 
@@ -361,7 +400,8 @@ fn node_describe(node: &str) -> Result<String, String> {
                         "port": port,
                         "status": "reachable",
                         "info": info.trim()
-                    }).to_string())
+                    })
+                    .to_string())
                 }
                 Ok(out) => {
                     let err = String::from_utf8_lossy(&out.stderr);
@@ -373,9 +413,10 @@ fn node_describe(node: &str) -> Result<String, String> {
                         "port": port,
                         "status": "unreachable",
                         "error": err.trim()
-                    }).to_string())
+                    })
+                    .to_string())
                 }
-                Err(e) => Err(format!("Failed to run ssh: {}", e))
+                Err(e) => Err(format!("Failed to run ssh: {}", e)),
             }
         }
         NodeType::Adb { device } => {
@@ -396,7 +437,8 @@ fn node_describe(node: &str) -> Result<String, String> {
                         "model": lines.first().unwrap_or(&""),
                         "android_version": lines.get(1).unwrap_or(&""),
                         "serial": lines.get(2).unwrap_or(&"")
-                    }).to_string())
+                    })
+                    .to_string())
                 }
                 Ok(out) => {
                     let err = String::from_utf8_lossy(&out.stderr);
@@ -406,9 +448,10 @@ fn node_describe(node: &str) -> Result<String, String> {
                         "device": device,
                         "status": "error",
                         "error": err.trim()
-                    }).to_string())
+                    })
+                    .to_string())
                 }
-                Err(e) => Err(format!("Failed to run adb: {}", e))
+                Err(e) => Err(format!("Failed to run adb: {}", e)),
             }
         }
         NodeType::Vnc { host, port, .. } => {
@@ -432,7 +475,8 @@ fn node_describe(node: &str) -> Result<String, String> {
                     "vncdotool": which::which("vncdotool").is_ok(),
                 },
                 "note": "Use vncdo/vncdotool for automation, or connect via VNC viewer"
-            }).to_string())
+            })
+            .to_string())
         }
         NodeType::Rdp { user, host, port } => {
             // Check if port is open
@@ -464,15 +508,21 @@ fn node_run(node: &str, command: &[impl AsRef<str>]) -> Result<String, String> {
     debug!(node, "Running command on node");
     match parse_node(node) {
         NodeType::Ssh { user, host, port } => {
-            let cmd_str = command.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join(" ");
+            let cmd_str = command
+                .iter()
+                .map(|s| s.as_ref())
+                .collect::<Vec<_>>()
+                .join(" ");
             debug!(user, host, port, cmd = %cmd_str, "SSH command");
 
             let output = Command::new("ssh")
                 .args([
-                    "-o", "ConnectTimeout=10",
-                    "-p", &port.to_string(),
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-p",
+                    &port.to_string(),
                     &format!("{}@{}", user, host),
-                    &cmd_str
+                    &cmd_str,
                 ])
                 .output()
                 .map_err(|e| format!("Failed to run ssh: {}", e))?;
@@ -487,10 +537,15 @@ fn node_run(node: &str, command: &[impl AsRef<str>]) -> Result<String, String> {
                 "exit_code": output.status.code(),
                 "stdout": stdout.trim(),
                 "stderr": stderr.trim()
-            }).to_string())
+            })
+            .to_string())
         }
         NodeType::Adb { device } => {
-            let cmd_str = command.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join(" ");
+            let cmd_str = command
+                .iter()
+                .map(|s| s.as_ref())
+                .collect::<Vec<_>>()
+                .join(" ");
             debug!(device, cmd = %cmd_str, "ADB command");
 
             let output = Command::new("adb")
@@ -507,14 +562,17 @@ fn node_run(node: &str, command: &[impl AsRef<str>]) -> Result<String, String> {
                 "exit_code": output.status.code(),
                 "stdout": stdout.trim(),
                 "stderr": stderr.trim()
-            }).to_string())
+            })
+            .to_string())
         }
-        NodeType::Vnc { .. } => {
-            Err("VNC nodes don't support arbitrary command execution. Use click, type, or key actions.".to_string())
-        }
-        NodeType::Rdp { .. } => {
-            Err("RDP nodes don't support arbitrary command execution. Use click, type, or key actions.".to_string())
-        }
+        NodeType::Vnc { .. } => Err(
+            "VNC nodes don't support arbitrary command execution. Use click, type, or key actions."
+                .to_string(),
+        ),
+        NodeType::Rdp { .. } => Err(
+            "RDP nodes don't support arbitrary command execution. Use click, type, or key actions."
+                .to_string(),
+        ),
     }
 }
 
@@ -560,7 +618,8 @@ fn node_screen_snap(node: &str, _facing: &str) -> Result<String, String> {
                 "type": "adb",
                 "action": "screen_snap",
                 "path": local_path
-            }).to_string())
+            })
+            .to_string())
         }
 
         NodeType::Ssh { user, host, port } => {
@@ -569,10 +628,12 @@ fn node_screen_snap(node: &str, _facing: &str) -> Result<String, String> {
 
             let output = Command::new("ssh")
                 .args([
-                    "-o", "ConnectTimeout=10",
-                    "-p", &port.to_string(),
+                    "-o",
+                    "ConnectTimeout=10",
+                    "-p",
+                    &port.to_string(),
                     &format!("{}@{}", user, host),
-                    "DISPLAY=:0 scrot -o /tmp/screenshot.png && cat /tmp/screenshot.png"
+                    "DISPLAY=:0 scrot -o /tmp/screenshot.png && cat /tmp/screenshot.png",
                 ])
                 .output()
                 .map_err(|e| format!("Failed to run ssh: {}", e))?;
@@ -585,14 +646,19 @@ fn node_screen_snap(node: &str, _facing: &str) -> Result<String, String> {
                     "type": "ssh",
                     "action": "screen_snap",
                     "path": local_path
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("Screenshot failed (need scrot on remote): {}", err))
             }
         }
 
-        NodeType::Vnc { host, port, password } => {
+        NodeType::Vnc {
+            host,
+            port,
+            password,
+        } => {
             let local_path = format!("/tmp/vnc_snap_{}.png", timestamp);
 
             // Try vncdo first, then vncdotool
@@ -616,7 +682,8 @@ fn node_screen_snap(node: &str, _facing: &str) -> Result<String, String> {
                 return Err("No VNC tool available. Install vncdo or vncdotool.".to_string());
             };
 
-            let output = cmd.output()
+            let output = cmd
+                .output()
                 .map_err(|e| format!("Failed to run VNC tool: {}", e))?;
 
             if output.status.success() {
@@ -625,7 +692,8 @@ fn node_screen_snap(node: &str, _facing: &str) -> Result<String, String> {
                     "type": "vnc",
                     "action": "screen_snap",
                     "path": local_path
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("VNC screenshot failed: {}", err))
@@ -674,7 +742,11 @@ fn node_screen_snap(node: &str, _facing: &str) -> Result<String, String> {
 /// Click at coordinates on VNC/RDP node.
 fn node_click(node: &str, x: i32, y: i32, button: &str) -> Result<String, String> {
     match parse_node(node) {
-        NodeType::Vnc { host, port, password } => {
+        NodeType::Vnc {
+            host,
+            port,
+            password,
+        } => {
             let btn = match button {
                 "left" | "1" => "1",
                 "middle" | "2" => "2",
@@ -702,7 +774,8 @@ fn node_click(node: &str, x: i32, y: i32, button: &str) -> Result<String, String
                 return Err("No VNC tool available. Install vncdo or vncdotool.".to_string());
             };
 
-            let output = cmd.output()
+            let output = cmd
+                .output()
                 .map_err(|e| format!("Failed to run VNC tool: {}", e))?;
 
             if output.status.success() {
@@ -712,7 +785,8 @@ fn node_click(node: &str, x: i32, y: i32, button: &str) -> Result<String, String
                     "x": x,
                     "y": y,
                     "button": button
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("VNC click failed: {}", err))
@@ -722,7 +796,15 @@ fn node_click(node: &str, x: i32, y: i32, button: &str) -> Result<String, String
         NodeType::Adb { device } => {
             // ADB input tap
             let output = Command::new("adb")
-                .args(["-s", &device, "shell", "input", "tap", &x.to_string(), &y.to_string()])
+                .args([
+                    "-s",
+                    &device,
+                    "shell",
+                    "input",
+                    "tap",
+                    &x.to_string(),
+                    &y.to_string(),
+                ])
                 .output()
                 .map_err(|e| format!("Failed to run adb: {}", e))?;
 
@@ -732,7 +814,8 @@ fn node_click(node: &str, x: i32, y: i32, button: &str) -> Result<String, String
                     "action": "click",
                     "x": x,
                     "y": y
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("ADB tap failed: {}", err))
@@ -743,10 +826,12 @@ fn node_click(node: &str, x: i32, y: i32, button: &str) -> Result<String, String
             // Use xdotool over SSH
             let output = Command::new("ssh")
                 .args([
-                    "-o", "ConnectTimeout=5",
-                    "-p", &port.to_string(),
+                    "-o",
+                    "ConnectTimeout=5",
+                    "-p",
+                    &port.to_string(),
                     &format!("{}@{}", user, host),
-                    &format!("DISPLAY=:0 xdotool mousemove {} {} click 1", x, y)
+                    &format!("DISPLAY=:0 xdotool mousemove {} {} click 1", x, y),
                 ])
                 .output()
                 .map_err(|e| format!("Failed to run ssh: {}", e))?;
@@ -758,23 +843,29 @@ fn node_click(node: &str, x: i32, y: i32, button: &str) -> Result<String, String
                     "x": x,
                     "y": y,
                     "via": "xdotool"
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("Click failed (need xdotool on remote): {}", err))
             }
         }
 
-        NodeType::Rdp { .. } => {
-            Err("RDP click requires interactive session. Consider using VNC or SSH+xdotool.".to_string())
-        }
+        NodeType::Rdp { .. } => Err(
+            "RDP click requires interactive session. Consider using VNC or SSH+xdotool."
+                .to_string(),
+        ),
     }
 }
 
 /// Type text on node.
 fn node_type_text(node: &str, text: &str) -> Result<String, String> {
     match parse_node(node) {
-        NodeType::Vnc { host, port, password } => {
+        NodeType::Vnc {
+            host,
+            port,
+            password,
+        } => {
             let mut cmd = if which::which("vncdo").is_ok() {
                 let mut c = Command::new("vncdo");
                 c.args(["-s", &format!("{}:{}", host, port)]);
@@ -795,7 +886,8 @@ fn node_type_text(node: &str, text: &str) -> Result<String, String> {
                 return Err("No VNC tool available.".to_string());
             };
 
-            let output = cmd.output()
+            let output = cmd
+                .output()
                 .map_err(|e| format!("Failed to run VNC tool: {}", e))?;
 
             if output.status.success() {
@@ -803,7 +895,8 @@ fn node_type_text(node: &str, text: &str) -> Result<String, String> {
                     "node": node,
                     "action": "type",
                     "length": text.len()
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("VNC type failed: {}", err))
@@ -823,7 +916,8 @@ fn node_type_text(node: &str, text: &str) -> Result<String, String> {
                     "node": node,
                     "action": "type",
                     "length": text.len()
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("ADB type failed: {}", err))
@@ -833,10 +927,12 @@ fn node_type_text(node: &str, text: &str) -> Result<String, String> {
         NodeType::Ssh { user, host, port } => {
             let output = Command::new("ssh")
                 .args([
-                    "-o", "ConnectTimeout=5",
-                    "-p", &port.to_string(),
+                    "-o",
+                    "ConnectTimeout=5",
+                    "-p",
+                    &port.to_string(),
                     &format!("{}@{}", user, host),
-                    &format!("DISPLAY=:0 xdotool type '{}'", text.replace('\'', "'\\''"))
+                    &format!("DISPLAY=:0 xdotool type '{}'", text.replace('\'', "'\\''")),
                 ])
                 .output()
                 .map_err(|e| format!("Failed to run ssh: {}", e))?;
@@ -847,23 +943,26 @@ fn node_type_text(node: &str, text: &str) -> Result<String, String> {
                     "action": "type",
                     "length": text.len(),
                     "via": "xdotool"
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("Type failed (need xdotool on remote): {}", err))
             }
         }
 
-        NodeType::Rdp { .. } => {
-            Err("RDP typing requires interactive session.".to_string())
-        }
+        NodeType::Rdp { .. } => Err("RDP typing requires interactive session.".to_string()),
     }
 }
 
 /// Send a key press on node.
 fn node_send_key(node: &str, key: &str) -> Result<String, String> {
     match parse_node(node) {
-        NodeType::Vnc { host, port, password } => {
+        NodeType::Vnc {
+            host,
+            port,
+            password,
+        } => {
             let mut cmd = if which::which("vncdo").is_ok() {
                 let mut c = Command::new("vncdo");
                 c.args(["-s", &format!("{}:{}", host, port)]);
@@ -884,7 +983,8 @@ fn node_send_key(node: &str, key: &str) -> Result<String, String> {
                 return Err("No VNC tool available.".to_string());
             };
 
-            let output = cmd.output()
+            let output = cmd
+                .output()
                 .map_err(|e| format!("Failed to run VNC tool: {}", e))?;
 
             if output.status.success() {
@@ -892,7 +992,8 @@ fn node_send_key(node: &str, key: &str) -> Result<String, String> {
                     "node": node,
                     "action": "key",
                     "key": key
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("VNC key failed: {}", err))
@@ -914,7 +1015,12 @@ fn node_send_key(node: &str, key: &str) -> Result<String, String> {
                 "LEFT" => "21",
                 "RIGHT" => "22",
                 k if k.parse::<u32>().is_ok() => k, // Raw keycode
-                _ => return Err(format!("Unknown key: {}. Use ENTER, BACK, HOME, TAB, SPACE, DELETE, UP/DOWN/LEFT/RIGHT, or keycode number.", key)),
+                _ => {
+                    return Err(format!(
+                        "Unknown key: {}. Use ENTER, BACK, HOME, TAB, SPACE, DELETE, UP/DOWN/LEFT/RIGHT, or keycode number.",
+                        key
+                    ));
+                }
             };
 
             let output = Command::new("adb")
@@ -928,7 +1034,8 @@ fn node_send_key(node: &str, key: &str) -> Result<String, String> {
                     "action": "key",
                     "key": key,
                     "keycode": keycode
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("ADB keyevent failed: {}", err))
@@ -938,10 +1045,12 @@ fn node_send_key(node: &str, key: &str) -> Result<String, String> {
         NodeType::Ssh { user, host, port } => {
             let output = Command::new("ssh")
                 .args([
-                    "-o", "ConnectTimeout=5",
-                    "-p", &port.to_string(),
+                    "-o",
+                    "ConnectTimeout=5",
+                    "-p",
+                    &port.to_string(),
                     &format!("{}@{}", user, host),
-                    &format!("DISPLAY=:0 xdotool key {}", key)
+                    &format!("DISPLAY=:0 xdotool key {}", key),
                 ])
                 .output()
                 .map_err(|e| format!("Failed to run ssh: {}", e))?;
@@ -952,16 +1061,15 @@ fn node_send_key(node: &str, key: &str) -> Result<String, String> {
                     "action": "key",
                     "key": key,
                     "via": "xdotool"
-                }).to_string())
+                })
+                .to_string())
             } else {
                 let err = String::from_utf8_lossy(&output.stderr);
                 Err(format!("Key failed (need xdotool on remote): {}", err))
             }
         }
 
-        NodeType::Rdp { .. } => {
-            Err("RDP key press requires interactive session.".to_string())
-        }
+        NodeType::Rdp { .. } => Err("RDP key press requires interactive session.".to_string()),
     }
 }
 
@@ -972,14 +1080,22 @@ fn node_notify(node: &str, title: &str, body: &str) -> Result<String, String> {
             // Use cmd notification (Android 10+)
             let output = Command::new("adb")
                 .args([
-                    "-s", &device,
+                    "-s",
+                    &device,
                     "shell",
-                    &format!("cmd notification post -t '{}' 'RustyClaw' '{}'", title, body)
+                    &format!(
+                        "cmd notification post -t '{}' 'RustyClaw' '{}'",
+                        title, body
+                    ),
                 ])
                 .output()
                 .map_err(|e| format!("Failed to run adb: {}", e))?;
 
-            let status = if output.status.success() { "sent" } else { "attempted" };
+            let status = if output.status.success() {
+                "sent"
+            } else {
+                "attempted"
+            };
 
             Ok(json!({
                 "node": node,
@@ -987,16 +1103,19 @@ fn node_notify(node: &str, title: &str, body: &str) -> Result<String, String> {
                 "title": title,
                 "body": body,
                 "status": status
-            }).to_string())
+            })
+            .to_string())
         }
 
         NodeType::Ssh { user, host, port } => {
             let output = Command::new("ssh")
                 .args([
-                    "-o", "ConnectTimeout=5",
-                    "-p", &port.to_string(),
+                    "-o",
+                    "ConnectTimeout=5",
+                    "-p",
+                    &port.to_string(),
                     &format!("{}@{}", user, host),
-                    &format!("notify-send '{}' '{}'", title, body)
+                    &format!("notify-send '{}' '{}'", title, body),
                 ])
                 .output();
 
@@ -1007,13 +1126,15 @@ fn node_notify(node: &str, title: &str, body: &str) -> Result<String, String> {
                     "title": title,
                     "body": body,
                     "status": "sent"
-                }).to_string()),
+                })
+                .to_string()),
                 _ => Ok(json!({
                     "node": node,
                     "action": "notify",
                     "status": "failed",
                     "note": "notify-send may not be available on target"
-                }).to_string())
+                })
+                .to_string()),
             }
         }
 
@@ -1034,7 +1155,12 @@ fn adb_camera_list(node: &str) -> Result<String, String> {
 
     // Query camera info via dumpsys
     let output = Command::new("adb")
-        .args(["-s", &device, "shell", "dumpsys media.camera | grep -E 'Camera|Facing'"])
+        .args([
+            "-s",
+            &device,
+            "shell",
+            "dumpsys media.camera | grep -E 'Camera|Facing'",
+        ])
         .output()
         .map_err(|e| format!("Failed to run adb: {}", e))?;
 
@@ -1044,7 +1170,8 @@ fn adb_camera_list(node: &str) -> Result<String, String> {
         "node": node,
         "cameras": stdout.trim(),
         "note": "Use camera app + screen_record for actual camera capture"
-    }).to_string())
+    })
+    .to_string())
 }
 
 /// Record screen on Android device.
@@ -1062,11 +1189,13 @@ fn adb_screen_record(node: &str, duration_ms: u64) -> Result<String, String> {
     // Start recording (this blocks for duration)
     let output = Command::new("adb")
         .args([
-            "-s", &device,
+            "-s",
+            &device,
             "shell",
             "screenrecord",
-            "--time-limit", &duration_secs.to_string(),
-            &remote_path
+            "--time-limit",
+            &duration_secs.to_string(),
+            &remote_path,
         ])
         .output()
         .map_err(|e| format!("Failed to run adb: {}", e))?;
@@ -1096,7 +1225,8 @@ fn adb_screen_record(node: &str, duration_ms: u64) -> Result<String, String> {
         "action": "screen_record",
         "duration_secs": duration_secs,
         "path": local_path
-    }).to_string())
+    })
+    .to_string())
 }
 
 /// Get location from Android device.
@@ -1109,9 +1239,10 @@ fn adb_location_get(node: &str) -> Result<String, String> {
     // Try to get last known location from location providers
     let output = Command::new("adb")
         .args([
-            "-s", &device,
+            "-s",
+            &device,
             "shell",
-            "dumpsys location | grep -A2 'last location'"
+            "dumpsys location | grep -A2 'last location'",
         ])
         .output()
         .map_err(|e| format!("Failed to run adb: {}", e))?;
@@ -1133,7 +1264,8 @@ fn adb_location_get(node: &str) -> Result<String, String> {
         "location_info": stdout.trim(),
         "mock_location": mock_enabled,
         "note": "For real-time location, use a location app or enable developer options"
-    }).to_string())
+    })
+    .to_string())
 }
 
 // ── Canvas ───────────────────────────────────────────────────────────────────
@@ -1189,7 +1321,8 @@ pub fn exec_canvas(args: &Value, _workspace_dir: &Path) -> Result<String, String
                 "opened_in_browser": open_result.is_ok(),
                 "title": meta.0,
                 "description": meta.1,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "hide" => {
@@ -1201,7 +1334,8 @@ pub fn exec_canvas(args: &Value, _workspace_dir: &Path) -> Result<String, String
             Ok(json!({
                 "status": "hidden",
                 "node": node.unwrap_or("default"),
-            }).to_string())
+            })
+            .to_string())
         }
 
         "navigate" => {
@@ -1227,7 +1361,8 @@ pub fn exec_canvas(args: &Value, _workspace_dir: &Path) -> Result<String, String
                 "opened_in_browser": open_result.is_ok(),
                 "title": meta.0,
                 "description": meta.1,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "eval" => {
@@ -1266,10 +1401,7 @@ pub fn exec_canvas(args: &Value, _workspace_dir: &Path) -> Result<String, String
         }
 
         "snapshot" => {
-            let current_url = CANVAS_URL
-                .lock()
-                .ok()
-                .and_then(|g| g.clone());
+            let current_url = CANVAS_URL.lock().ok().and_then(|g| g.clone());
 
             match current_url {
                 Some(url) => {
@@ -1282,15 +1414,15 @@ pub fn exec_canvas(args: &Value, _workspace_dir: &Path) -> Result<String, String
                         "node": node.unwrap_or("default"),
                         "content_length": content.len(),
                         "content": content,
-                    }).to_string())
+                    })
+                    .to_string())
                 }
-                None => {
-                    Ok(json!({
-                        "status": "no_canvas",
-                        "node": node.unwrap_or("default"),
-                        "note": "No canvas URL is currently presented. Use 'present' first.",
-                    }).to_string())
-                }
+                None => Ok(json!({
+                    "status": "no_canvas",
+                    "node": node.unwrap_or("default"),
+                    "note": "No canvas URL is currently presented. Use 'present' first.",
+                })
+                .to_string()),
             }
         }
 
@@ -1305,12 +1437,11 @@ pub fn exec_canvas(args: &Value, _workspace_dir: &Path) -> Result<String, String
             }).to_string())
         }
 
-        "a2ui_reset" => {
-            Ok(json!({
-                "status": "a2ui_reset",
-                "note": "A2UI state cleared.",
-            }).to_string())
-        }
+        "a2ui_reset" => Ok(json!({
+            "status": "a2ui_reset",
+            "note": "A2UI state cleared.",
+        })
+        .to_string()),
 
         _ => Err(format!(
             "Unknown action: {}. Valid: present, hide, navigate, eval, snapshot, a2ui_push, a2ui_reset",

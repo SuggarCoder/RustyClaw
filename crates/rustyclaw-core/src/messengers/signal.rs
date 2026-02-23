@@ -10,13 +10,9 @@ use super::{Message, Messenger, SendOptions};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use presage::{
-    libsignal_service::{
-        content::ContentBody,
-        prelude::Uuid,
-        proto::DataMessage,
-    },
-    manager::ReceivingMode,
     Manager,
+    libsignal_service::{content::ContentBody, prelude::Uuid, proto::DataMessage},
+    manager::ReceivingMode,
 };
 use presage_store_sled::SledStore;
 use std::path::PathBuf;
@@ -61,12 +57,10 @@ impl SignalMessenger {
             .await
             .context("Failed to open Signal store")?;
 
-        let (manager, provisioning_link) = Manager::link_secondary_device(
-            store,
-            device_name.to_string(),
-        )
-        .await
-        .context("Failed to start device linking")?;
+        let (manager, provisioning_link) =
+            Manager::link_secondary_device(store, device_name.to_string())
+                .await
+                .context("Failed to start device linking")?;
 
         // Call the QR code callback with the provisioning URL
         on_qr(&provisioning_link.to_string());
@@ -180,14 +174,15 @@ impl Messenger for SignalMessenger {
 
         // Send the message
         manager_guard
-            .send_message(recipient_uuid, data_message, chrono::Utc::now().timestamp_millis() as u64)
+            .send_message(
+                recipient_uuid,
+                data_message,
+                chrono::Utc::now().timestamp_millis() as u64,
+            )
             .await
             .context("Failed to send Signal message")?;
 
-        Ok(format!(
-            "signal-{}",
-            chrono::Utc::now().timestamp_millis()
-        ))
+        Ok(format!("signal-{}", chrono::Utc::now().timestamp_millis()))
     }
 
     async fn send_message_with_options(&self, opts: SendOptions<'_>) -> Result<String> {
@@ -203,12 +198,14 @@ impl Messenger for SignalMessenger {
         let mut messages = Vec::new();
 
         // Receive messages (non-blocking)
-        let mut receiving = manager_guard.receive_messages(ReceivingMode::WaitForContacts).await?;
+        let mut receiving = manager_guard
+            .receive_messages(ReceivingMode::WaitForContacts)
+            .await?;
 
         // Process a few messages without blocking
         use futures_util::StreamExt;
         let timeout = tokio::time::Duration::from_millis(100);
-        
+
         loop {
             match tokio::time::timeout(timeout, receiving.next()).await {
                 Ok(Some(Ok(content))) => {
@@ -253,10 +250,7 @@ mod tests {
 
     #[test]
     fn test_signal_messenger_creation() {
-        let messenger = SignalMessenger::new(
-            "test".to_string(),
-            PathBuf::from("/tmp/signal-test"),
-        );
+        let messenger = SignalMessenger::new("test".to_string(), PathBuf::from("/tmp/signal-test"));
         assert_eq!(messenger.name(), "test");
         assert_eq!(messenger.messenger_type(), "signal");
         assert!(!messenger.is_connected());

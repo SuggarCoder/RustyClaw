@@ -1,15 +1,15 @@
 //! Model selector dialog.
 
-use tokio::sync::mpsc;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
+use tokio::sync::mpsc;
 
 use crate::action::Action;
-use rustyclaw_core::config::ModelProvider;
 use crate::panes::DisplayMessage;
+use crate::tui_palette as tp;
+use rustyclaw_core::config::ModelProvider;
 use rustyclaw_core::providers;
 use rustyclaw_core::secrets::SecretsManager;
-use crate::tui_palette as tp;
 
 use super::SPINNER_FRAMES;
 
@@ -64,12 +64,8 @@ pub fn spawn_fetch_models(
     });
 
     // Gather what we need for the background task
-    let api_key = providers::secret_key_for_provider(provider).and_then(|sk| {
-        secrets_manager
-            .get_secret(sk, true)
-            .ok()
-            .flatten()
-    });
+    let api_key = providers::secret_key_for_provider(provider)
+        .and_then(|sk| secrets_manager.get_secret(sk, true).ok().flatten());
 
     let base_url = model_config.and_then(|m| m.base_url.clone());
 
@@ -130,7 +126,10 @@ pub fn handle_model_selector_key(
                 });
                 cfg.model = Some(model_name.clone());
                 if let Err(e) = save_config() {
-                    messages.push(DisplayMessage::error(format!("Failed to save config: {}", e)));
+                    messages.push(DisplayMessage::error(format!(
+                        "Failed to save config: {}",
+                        e
+                    )));
                 } else {
                     messages.push(DisplayMessage::success(format!(
                         "✓ Model set to {}.",

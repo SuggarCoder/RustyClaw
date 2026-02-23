@@ -5,8 +5,8 @@ mod state;
 pub use app::App;
 pub use state::SharedState;
 
-use rustyclaw_core::config::Config;
 use anyhow::Result;
+use rustyclaw_core::config::Config;
 
 pub fn create_app(config: Config) -> Result<App> {
     App::new(config)

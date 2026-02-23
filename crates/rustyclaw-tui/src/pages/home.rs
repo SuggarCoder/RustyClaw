@@ -5,12 +5,9 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::action::Action;
 use crate::pages::Page;
-use crate::panes::{
-    messages::MessagesPane,
-    Pane, PaneState,
-};
-use rustyclaw_core::types::InputMode;
+use crate::panes::{Pane, PaneState, messages::MessagesPane};
 use crate::tui::EventResponse;
+use rustyclaw_core::types::InputMode;
 
 pub struct Home {
     command_tx: Option<UnboundedSender<Action>>,
@@ -25,9 +22,7 @@ impl Home {
 
         Ok(Self {
             command_tx: None,
-            panes: vec![
-                Box::new(MessagesPane::new(true, focused_border_style)),
-            ],
+            panes: vec![Box::new(MessagesPane::new(true, focused_border_style))],
             focused_pane_index: 0,
         })
     }
@@ -103,9 +98,7 @@ impl Page for Home {
             }
             _ => {
                 // Forward action to the (only) pane
-                if let Some(result) =
-                    self.panes[self.focused_pane_index].update(action, state)?
-                {
+                if let Some(result) = self.panes[self.focused_pane_index].update(action, state)? {
                     return Ok(Some(result));
                 }
             }

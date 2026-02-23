@@ -400,7 +400,7 @@ mod tests {
         let ctx = WorkspaceContext::new(workspace.path().to_path_buf());
 
         let audit = ctx.audit_files(SessionType::Main);
-        
+
         // SOUL.md exists
         assert!(audit.iter().any(|(p, e)| p == "SOUL.md" && *e));
         // MEMORY.md exists

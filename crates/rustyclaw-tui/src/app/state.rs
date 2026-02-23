@@ -1,10 +1,10 @@
+use crate::panes::{DisplayMessage, PaneState};
 use rustyclaw_core::config::Config;
 use rustyclaw_core::gateway::ChatMessage;
-use crate::panes::{DisplayMessage, PaneState};
-use rustyclaw_core::types::{GatewayStatus, InputMode};
 use rustyclaw_core::secrets::SecretsManager;
 use rustyclaw_core::skills::SkillManager;
 use rustyclaw_core::soul::SoulManager;
+use rustyclaw_core::types::{GatewayStatus, InputMode};
 
 pub struct SharedState {
     pub config: Config,

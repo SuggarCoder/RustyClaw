@@ -1,15 +1,15 @@
 //! Runtime tools: execute_command and process management.
 
 use super::helpers::{
-    command_references_credentials, is_protected_path, process_manager, resolve_path,
-    run_sandboxed_command, VAULT_ACCESS_DENIED,
+    VAULT_ACCESS_DENIED, command_references_credentials, is_protected_path, process_manager,
+    resolve_path, run_sandboxed_command,
 };
 use crate::process_manager::SessionStatus;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
 /// Execute a shell command with background support and optional sandboxing.
 #[instrument(skip(args, workspace_dir), fields(command))]
@@ -324,10 +324,9 @@ pub fn exec_process(args: &Value, _workspace_dir: &Path) -> Result<String, Strin
 
         "send_keys" | "sendkeys" | "send-keys" => {
             let id = session_id.ok_or("Missing sessionId for send_keys action")?;
-            let keys = args
-                .get("keys")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing 'keys' for send_keys action (e.g. \"Enter\", \"Ctrl-C\", \"Up Up Down\")")?;
+            let keys = args.get("keys").and_then(|v| v.as_str()).ok_or(
+                "Missing 'keys' for send_keys action (e.g. \"Enter\", \"Ctrl-C\", \"Up Up Down\")",
+            )?;
 
             let session = mgr
                 .get_mut(id)

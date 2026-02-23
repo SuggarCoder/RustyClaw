@@ -5,8 +5,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 
 use crate::action::Action;
 use crate::panes::DisplayMessage;
-use rustyclaw_core::secrets::{AccessPolicy, SecretsManager};
 use crate::tui_palette as tp;
+use rustyclaw_core::secrets::{AccessPolicy, SecretsManager};
 
 /// Which policy option is highlighted in the policy-picker dialog.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -63,23 +63,28 @@ pub fn handle_policy_picker_key(
                     (None, Action::Noop)
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
-                    let cur = options.iter().position(|o| *o == picker.selected).unwrap_or(0);
+                    let cur = options
+                        .iter()
+                        .position(|o| *o == picker.selected)
+                        .unwrap_or(0);
                     let next = if cur == 0 { options.len() - 1 } else { cur - 1 };
                     picker.selected = options[next];
                     (Some(picker), Action::Noop)
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let cur = options.iter().position(|o| *o == picker.selected).unwrap_or(0);
+                    let cur = options
+                        .iter()
+                        .position(|o| *o == picker.selected)
+                        .unwrap_or(0);
                     let next = (cur + 1) % options.len();
                     picker.selected = options[next];
                     (Some(picker), Action::Noop)
                 }
                 KeyCode::Enter => match picker.selected {
                     PolicyPickerOption::Open => {
-                        match secrets_manager.set_credential_policy(
-                            &picker.cred_name,
-                            AccessPolicy::Always,
-                        ) {
+                        match secrets_manager
+                            .set_credential_policy(&picker.cred_name, AccessPolicy::Always)
+                        {
                             Ok(()) => {
                                 messages.push(DisplayMessage::success(format!(
                                     "Policy for '{}' set to OPEN.",
@@ -96,10 +101,9 @@ pub fn handle_policy_picker_key(
                         (None, Action::Update)
                     }
                     PolicyPickerOption::Ask => {
-                        match secrets_manager.set_credential_policy(
-                            &picker.cred_name,
-                            AccessPolicy::WithApproval,
-                        ) {
+                        match secrets_manager
+                            .set_credential_policy(&picker.cred_name, AccessPolicy::WithApproval)
+                        {
                             Ok(()) => {
                                 messages.push(DisplayMessage::success(format!(
                                     "Policy for '{}' set to ASK.",
@@ -116,10 +120,9 @@ pub fn handle_policy_picker_key(
                         (None, Action::Update)
                     }
                     PolicyPickerOption::Auth => {
-                        match secrets_manager.set_credential_policy(
-                            &picker.cred_name,
-                            AccessPolicy::WithAuth,
-                        ) {
+                        match secrets_manager
+                            .set_credential_policy(&picker.cred_name, AccessPolicy::WithAuth)
+                        {
                             Ok(()) => {
                                 messages.push(DisplayMessage::success(format!(
                                     "Policy for '{}' set to AUTH.",
@@ -199,7 +202,6 @@ pub fn handle_policy_picker_key(
     }
 }
 
-
 /// Handle key events for the policy picker (gateway-backed).
 /// Returns Actions that trigger gateway sends instead of calling SecretsManager directly.
 pub fn handle_policy_picker_key_gateway(
@@ -221,17 +223,21 @@ pub fn handle_policy_picker_key_gateway(
             ];
 
             match code {
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    (None, Action::Noop)
-                }
+                KeyCode::Esc | KeyCode::Char('q') => (None, Action::Noop),
                 KeyCode::Up | KeyCode::Char('k') => {
-                    let cur = options.iter().position(|o| *o == picker.selected).unwrap_or(0);
+                    let cur = options
+                        .iter()
+                        .position(|o| *o == picker.selected)
+                        .unwrap_or(0);
                     let next = if cur == 0 { options.len() - 1 } else { cur - 1 };
                     picker.selected = options[next];
                     (Some(picker), Action::Noop)
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let cur = options.iter().position(|o| *o == picker.selected).unwrap_or(0);
+                    let cur = options
+                        .iter()
+                        .position(|o| *o == picker.selected)
+                        .unwrap_or(0);
                     let next = (cur + 1) % options.len();
                     picker.selected = options[next];
                     (Some(picker), Action::Noop)
@@ -244,7 +250,8 @@ pub fn handle_policy_picker_key_gateway(
                             "policy": "always",
                         });
                         messages.push(DisplayMessage::info(format!(
-                            "Setting policy for '{}' to OPEN…", picker.cred_name,
+                            "Setting policy for '{}' to OPEN…",
+                            picker.cred_name,
                         )));
                         (None, Action::SendToGateway(frame.to_string()))
                     }
@@ -255,7 +262,8 @@ pub fn handle_policy_picker_key_gateway(
                             "policy": "ask",
                         });
                         messages.push(DisplayMessage::info(format!(
-                            "Setting policy for '{}' to ASK…", picker.cred_name,
+                            "Setting policy for '{}' to ASK…",
+                            picker.cred_name,
                         )));
                         (None, Action::SendToGateway(frame.to_string()))
                     }
@@ -266,7 +274,8 @@ pub fn handle_policy_picker_key_gateway(
                             "policy": "auth",
                         });
                         messages.push(DisplayMessage::info(format!(
-                            "Setting policy for '{}' to AUTH…", picker.cred_name,
+                            "Setting policy for '{}' to AUTH…",
+                            picker.cred_name,
                         )));
                         (None, Action::SendToGateway(frame.to_string()))
                     }
@@ -307,7 +316,8 @@ pub fn handle_policy_picker_key_gateway(
                     "skills": skills,
                 });
                 messages.push(DisplayMessage::info(format!(
-                    "Setting policy for '{}' to SKILL…", picker.cred_name,
+                    "Setting policy for '{}' to SKILL…",
+                    picker.cred_name,
                 )));
                 (None, Action::SendToGateway(frame.to_string()))
             }

@@ -4,10 +4,10 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::action::Action;
-use rustyclaw_core::config::Config;
 use crate::panes::DisplayMessage;
-use rustyclaw_core::secrets::SecretsManager;
 use crate::tui_palette as tp;
+use rustyclaw_core::config::Config;
+use rustyclaw_core::secrets::SecretsManager;
 
 /// Phase of the TOTP setup dialog.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,9 +68,8 @@ pub fn handle_totp_dialog_key(
                         Ok(true) => {
                             config.totp_enabled = true;
                             let _ = config.save(None);
-                            messages.push(DisplayMessage::success(
-                                "✓ 2FA configured successfully.",
-                            ));
+                            messages
+                                .push(DisplayMessage::success("✓ 2FA configured successfully."));
                             (
                                 Some(TotpDialogState {
                                     phase: TotpDialogPhase::Verified,
@@ -136,7 +135,6 @@ pub fn handle_totp_dialog_key(
     }
 }
 
-
 /// Handle key events for the TOTP dialog (gateway-backed).
 /// Returns Actions that trigger gateway sends instead of calling SecretsManager directly.
 pub fn handle_totp_dialog_key_gateway(
@@ -186,9 +184,7 @@ pub fn handle_totp_dialog_key_gateway(
             _ => (Some(dlg), Action::Noop),
         },
         TotpDialogPhase::AlreadyConfigured => match code {
-            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                (None, Action::Noop)
-            }
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => (None, Action::Noop),
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 // Remove 2FA via gateway
                 let frame = serde_json::json!({"type": "secrets_remove_totp"});
@@ -216,7 +212,8 @@ pub fn draw_totp_dialog(frame: &mut ratatui::Frame<'_>, area: Rect, dlg: &TotpDi
 
     let (title, lines, hint): (&str, Vec<Line>, &str) = match &dlg.phase {
         TotpDialogPhase::ShowUri { uri, input } => {
-            let masked: String = format!("{}{}", "*".repeat(input.len()), "_".repeat(6 - input.len()));
+            let masked: String =
+                format!("{}{}", "*".repeat(input.len()), "_".repeat(6 - input.len()));
             (
                 " Set up 2FA ",
                 vec![
@@ -243,7 +240,8 @@ pub fn draw_totp_dialog(frame: &mut ratatui::Frame<'_>, area: Rect, dlg: &TotpDi
             )
         }
         TotpDialogPhase::Failed { input, .. } => {
-            let masked: String = format!("{}{}", "*".repeat(input.len()), "_".repeat(6 - input.len()));
+            let masked: String =
+                format!("{}{}", "*".repeat(input.len()), "_".repeat(6 - input.len()));
             (
                 " 2FA Verification ",
                 vec![

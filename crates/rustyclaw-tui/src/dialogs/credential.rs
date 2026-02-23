@@ -5,8 +5,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
 
 use crate::action::Action;
 use crate::panes::DisplayMessage;
-use rustyclaw_core::secrets::{AccessPolicy, SecretsManager};
 use crate::tui_palette as tp;
+use rustyclaw_core::secrets::{AccessPolicy, SecretsManager};
 
 use super::secret_viewer::copy_to_clipboard;
 use super::{PolicyPickerOption, PolicyPickerPhase, PolicyPickerState, SecretViewerState};
@@ -216,7 +216,6 @@ pub fn handle_credential_dialog_key(
     }
 }
 
-
 /// Handle key events when the credential dialog is open (gateway-backed).
 /// Instead of calling SecretsManager directly, returns Actions that the app
 /// dispatches as gateway sends.
@@ -244,9 +243,7 @@ pub fn handle_credential_dialog_key_gateway(
     ];
 
     match code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            (None, None, Action::Noop)
-        }
+        KeyCode::Esc | KeyCode::Char('q') => (None, None, Action::Noop),
         KeyCode::Up | KeyCode::Char('k') => {
             let cur = options.iter().position(|o| *o == dlg.selected).unwrap_or(0);
             let next = if cur == 0 { options.len() - 1 } else { cur - 1 };
@@ -310,9 +307,7 @@ pub fn handle_credential_dialog_key_gateway(
                     (None, None, Action::SendToGateway(frame.to_string()))
                 }
                 CredDialogOption::SetupTotp => (None, None, Action::ShowTotpSetup),
-                CredDialogOption::Cancel => {
-                    (None, None, Action::Update)
-                }
+                CredDialogOption::Cancel => (None, None, Action::Update),
             }
         }
         _ => (Some(dlg), None, Action::Noop),
@@ -370,10 +365,7 @@ pub fn draw_credential_dialog(
         ),
         (policy_label, CredDialogOption::ChangePolicy),
         (toggle_label.to_string(), CredDialogOption::ToggleDisable),
-        (
-            "  Delete credential".to_string(),
-            CredDialogOption::Delete,
-        ),
+        ("  Delete credential".to_string(), CredDialogOption::Delete),
         (totp_label.to_string(), CredDialogOption::SetupTotp),
         ("  Cancel".to_string(), CredDialogOption::Cancel),
     ];

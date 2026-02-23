@@ -148,13 +148,18 @@ pub fn exec_uv_manage(args: &Value, workspace_dir: &Path) -> Result<String, Stri
                 return Err("uv is not installed.".into());
             }
             // Accept either a single "package" or an array of "packages"
-            let packages: Vec<String> = if let Some(pkg) = args.get("package").and_then(|v| v.as_str()) {
-                vec![pkg.to_string()]
-            } else if let Some(pkgs) = args.get("packages").and_then(|v| v.as_array()) {
-                pkgs.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-            } else {
-                return Err("Missing required parameter: package (string) or packages (array).".into());
-            };
+            let packages: Vec<String> =
+                if let Some(pkg) = args.get("package").and_then(|v| v.as_str()) {
+                    vec![pkg.to_string()]
+                } else if let Some(pkgs) = args.get("packages").and_then(|v| v.as_array()) {
+                    pkgs.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                } else {
+                    return Err(
+                        "Missing required parameter: package (string) or packages (array).".into(),
+                    );
+                };
             if packages.is_empty() {
                 return Err("No packages specified.".into());
             }
@@ -167,18 +172,24 @@ pub fn exec_uv_manage(args: &Value, workspace_dir: &Path) -> Result<String, Stri
             if !is_uv_installed() {
                 return Err("uv is not installed.".into());
             }
-            let packages: Vec<String> = if let Some(pkg) = args.get("package").and_then(|v| v.as_str()) {
-                vec![pkg.to_string()]
-            } else if let Some(pkgs) = args.get("packages").and_then(|v| v.as_array()) {
-                pkgs.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-            } else {
-                return Err("Missing required parameter: package or packages.".into());
-            };
+            let packages: Vec<String> =
+                if let Some(pkg) = args.get("package").and_then(|v| v.as_str()) {
+                    vec![pkg.to_string()]
+                } else if let Some(pkgs) = args.get("packages").and_then(|v| v.as_array()) {
+                    pkgs.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                } else {
+                    return Err("Missing required parameter: package or packages.".into());
+                };
             if packages.is_empty() {
                 return Err("No packages specified.".into());
             }
             let pkg_str = packages.join(" ");
-            sh_in(workspace_dir, &format!("uv pip uninstall {} -y 2>&1", pkg_str))
+            sh_in(
+                workspace_dir,
+                &format!("uv pip uninstall {} -y 2>&1", pkg_str),
+            )
         }
 
         // ── pip list ────────────────────────────────────────────
@@ -216,7 +227,9 @@ pub fn exec_uv_manage(args: &Value, workspace_dir: &Path) -> Result<String, Stri
             if !is_uv_installed() {
                 return Err("uv is not installed.".into());
             }
-            let command = args.get("command").and_then(|v| v.as_str())
+            let command = args
+                .get("command")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: command")?;
             sh_in(workspace_dir, &format!("uv run {} 2>&1", command))
         }
@@ -226,7 +239,9 @@ pub fn exec_uv_manage(args: &Value, workspace_dir: &Path) -> Result<String, Stri
             if !is_uv_installed() {
                 return Err("uv is not installed.".into());
             }
-            let version = args.get("version").and_then(|v| v.as_str())
+            let version = args
+                .get("version")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: version (e.g. '3.12', '3.11.6')")?;
             sh(&format!("uv python install {} 2>&1", version))
         }

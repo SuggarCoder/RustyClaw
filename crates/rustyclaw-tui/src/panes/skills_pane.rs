@@ -7,8 +7,8 @@ use ratatui::{
 
 use crate::action::Action;
 use crate::panes::{Pane, PaneState};
-use crate::tui_palette as tp;
 use crate::tui::Frame;
+use crate::tui_palette as tp;
 
 pub struct SkillsPane {
     focused: bool,
@@ -84,7 +84,10 @@ impl Pane for SkillsPane {
                     Span::styled(format!("{} ", icon), icon_style),
                     Span::styled(&s.name, name_style),
                     Span::styled(
-                        format!(" — {}", s.description.as_deref().unwrap_or("No description")),
+                        format!(
+                            " — {}",
+                            s.description.as_deref().unwrap_or("No description")
+                        ),
                         Style::default().fg(tp::MUTED),
                     ),
                 ]))

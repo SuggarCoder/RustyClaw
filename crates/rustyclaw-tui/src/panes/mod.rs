@@ -19,8 +19,6 @@ pub use rustyclaw_core::types::{GatewayStatus, InputMode, MessageRole};
 /// Fix bare code fences (```) to have a language tag (```text).
 /// This prevents tui-markdown from warning about missing syntax definitions.
 fn fix_bare_code_fences(content: &str) -> String {
-
-
     // Fast path: if no code fences at all, return as-is
     if !content.contains("```") {
         return content.to_string();
@@ -35,7 +33,13 @@ fn fix_bare_code_fences(content: &str) -> String {
         if let Some(after_fence) = trimmed.strip_prefix("```") {
             if !in_code_block {
                 // Opening fence - check if it has a language
-                if after_fence.is_empty() || after_fence.chars().next().map(|c| c.is_whitespace()).unwrap_or(true) {
+                if after_fence.is_empty()
+                    || after_fence
+                        .chars()
+                        .next()
+                        .map(|c| c.is_whitespace())
+                        .unwrap_or(true)
+                {
                     // Bare fence or fence followed by whitespace - add "text" language
                     let prefix = &line[..line.len() - trimmed.len()]; // preserve leading whitespace
                     result.push_str(prefix);
@@ -76,7 +80,7 @@ fn is_markdown_table_row(line: &str) -> bool {
         return false;
     }
     // Should have actual content, not just pipes and dashes
-    let inner = &trimmed[1..trimmed.len()-1];
+    let inner = &trimmed[1..trimmed.len() - 1];
     inner.chars().any(|c| c.is_alphanumeric())
 }
 
@@ -91,7 +95,9 @@ fn is_markdown_table_separator(line: &str) -> bool {
         return false;
     }
     // Should only contain |, -, :, and whitespace
-    trimmed.chars().all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
+    trimmed
+        .chars()
+        .all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
 }
 
 /// Format markdown tables as properly aligned ASCII tables.
@@ -202,8 +208,11 @@ fn render_table(lines: &[&str]) -> String {
         let trimmed = line.trim();
 
         // Check if this is a separator line (|---|---|)
-        if trimmed.chars().all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
-            && trimmed.contains('-') {
+        if trimmed
+            .chars()
+            .all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
+            && trimmed.contains('-')
+        {
             separator_idx = Some(i);
             continue;
         }
@@ -246,9 +255,15 @@ fn render_table(lines: &[&str]) -> String {
     // Box drawing characters
     let h = "─";
     let v = "│";
-    let tl = "┌"; let tm = "┬"; let tr = "┐";
-    let ml = "├"; let mm = "┼"; let mr = "┤";
-    let bl = "└"; let bm = "┴"; let br = "┘";
+    let tl = "┌";
+    let tm = "┬";
+    let tr = "┐";
+    let ml = "├";
+    let mm = "┼";
+    let mr = "┤";
+    let bl = "└";
+    let bm = "┴";
+    let br = "┘";
 
     // Top border
     output.push_str(tl);
@@ -306,7 +321,11 @@ pub struct DisplayMessage {
 
 impl DisplayMessage {
     pub fn new(role: MessageRole, content: impl Into<String>) -> Self {
-        Self { role, content: content.into(), cached_lines: std::cell::OnceCell::new() }
+        Self {
+            role,
+            content: content.into(),
+            cached_lines: std::cell::OnceCell::new(),
+        }
     }
 
     pub fn user(content: impl Into<String>) -> Self {
@@ -349,15 +368,20 @@ impl DisplayMessage {
 
     /// Get cached lines, computing them if needed.
     pub fn get_lines(&self, tab_width: usize) -> &Vec<ratatui::text::Line<'static>> {
-        self.cached_lines.get_or_init(|| Self::build_lines_cached(&self.role, &self.content, tab_width))
+        self.cached_lines
+            .get_or_init(|| Self::build_lines_cached(&self.role, &self.content, tab_width))
     }
 
     /// Build styled lines for this message (internal implementation).
-    fn build_lines_cached(role: &MessageRole, content: &str, tab_width: usize) -> Vec<ratatui::text::Line<'static>> {
-        use ratatui::text::{Line, Span};
-        use ratatui::style::Style;
-        use tui_markdown::{from_str_with_options, Options};
+    fn build_lines_cached(
+        role: &MessageRole,
+        content: &str,
+        tab_width: usize,
+    ) -> Vec<ratatui::text::Line<'static>> {
         use crate::tui_palette::{self as tp, RustyClawMarkdownStyle};
+        use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use tui_markdown::{Options, from_str_with_options};
 
         // Expand tab characters to spaces
         let content: String = if content.contains('\t') {
@@ -418,10 +442,7 @@ impl DisplayMessage {
                     if i == 0 {
                         // First line gets the icon
                         spans.push(Span::raw(" "));
-                        spans.push(Span::styled(
-                            format!("{icon} "),
-                            Style::default().fg(color),
-                        ));
+                        spans.push(Span::styled(format!("{icon} "), Style::default().fg(color)));
                         spans.push(Span::styled(
                             raw_line.to_string(),
                             Style::default().fg(color),
@@ -443,10 +464,7 @@ impl DisplayMessage {
             // Single-line non-assistant messages.
             let mut spans: Vec<Span<'static>> = Vec::new();
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                format!("{icon} "),
-                Style::default().fg(color),
-            ));
+            spans.push(Span::styled(format!("{icon} "), Style::default().fg(color)));
             spans.push(Span::styled(content, Style::default().fg(color)));
             return vec![Line::from(spans)];
         }
@@ -461,10 +479,7 @@ impl DisplayMessage {
             .map(|line| {
                 let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
                 for span in line.spans {
-                    spans.push(Span::styled(
-                        span.content.into_owned(),
-                        span.style,
-                    ));
+                    spans.push(Span::styled(span.content.into_owned(), span.style));
                 }
                 Line::from(spans)
             })

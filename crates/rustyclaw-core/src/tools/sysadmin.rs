@@ -5,10 +5,10 @@
 //! automatically.  All commands run through `sh -c` and respect the sandbox
 //! restrictions already in place (credential directory, deny paths, etc.).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -128,7 +128,11 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
     let package = args.get("package").and_then(|v| v.as_str());
     let manager_override = args.get("manager").and_then(|v| v.as_str());
 
-    debug!(package, manager = manager_override, "Package management request");
+    debug!(
+        package,
+        manager = manager_override,
+        "Package management request"
+    );
 
     let (mgr, mgr_name) = if let Some(m) = manager_override {
         (m, m)
@@ -166,7 +170,8 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
                 "package": pkg,
                 "manager": mgr_name,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "uninstall" | "remove" => {
@@ -191,7 +196,8 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
                 "package": pkg,
                 "manager": mgr_name,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "upgrade" => {
@@ -213,7 +219,9 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
                 // Upgrade all
                 match mgr {
                     "brew" => "brew upgrade".to_string(),
-                    "apt" | "apt-get" => "sudo apt-get update && sudo apt-get upgrade -y".to_string(),
+                    "apt" | "apt-get" => {
+                        "sudo apt-get update && sudo apt-get upgrade -y".to_string()
+                    }
                     "dnf" => "sudo dnf upgrade -y".to_string(),
                     "yum" => "sudo yum update -y".to_string(),
                     "pacman" => "sudo pacman -Syu --noconfirm".to_string(),
@@ -230,7 +238,8 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
                 "package": package.unwrap_or("(all)"),
                 "manager": mgr_name,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "search" => {
@@ -253,14 +262,19 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
                 "query": query,
                 "manager": mgr_name,
                 "results": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "list" => {
             let cmd = match mgr {
                 "brew" => "brew list --versions".to_string(),
-                "apt" | "apt-get" => "dpkg -l | tail -n +6 | awk '{print $2, $3}' | head -100".to_string(),
-                "dnf" | "yum" => "rpm -qa --qf '%{NAME} %{VERSION}-%{RELEASE}\n' | sort | head -100".to_string(),
+                "apt" | "apt-get" => {
+                    "dpkg -l | tail -n +6 | awk '{print $2, $3}' | head -100".to_string()
+                }
+                "dnf" | "yum" => {
+                    "rpm -qa --qf '%{NAME} %{VERSION}-%{RELEASE}\n' | sort | head -100".to_string()
+                }
                 "pacman" => "pacman -Q | head -100".to_string(),
                 "zypper" => "zypper se --installed-only | head -100".to_string(),
                 "apk" => "apk list --installed 2>/dev/null | head -100".to_string(),
@@ -273,7 +287,8 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
                 "action": "list",
                 "manager": mgr_name,
                 "packages": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "info" => {
@@ -283,7 +298,10 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
                 "apt" | "apt-get" => format!("apt-cache show {} 2>/dev/null | head -40", pkg),
                 "dnf" => format!("dnf info {} 2>/dev/null", pkg),
                 "yum" => format!("yum info {} 2>/dev/null", pkg),
-                "pacman" => format!("pacman -Si {} 2>/dev/null || pacman -Qi {} 2>/dev/null", pkg, pkg),
+                "pacman" => format!(
+                    "pacman -Si {} 2>/dev/null || pacman -Qi {} 2>/dev/null",
+                    pkg, pkg
+                ),
                 "zypper" => format!("zypper info {}", pkg),
                 "apk" => format!("apk info {} 2>/dev/null", pkg),
                 "snap" => format!("snap info {}", pkg),
@@ -296,16 +314,16 @@ pub fn exec_pkg_manage(args: &Value, _workspace_dir: &Path) -> Result<String, St
                 "package": pkg,
                 "manager": mgr_name,
                 "details": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
-        "detect" => {
-            Ok(json!({
-                "action": "detect",
-                "manager": mgr_name,
-                "command": mgr,
-            }).to_string())
-        }
+        "detect" => Ok(json!({
+            "action": "detect",
+            "manager": mgr_name,
+            "command": mgr,
+        })
+        .to_string()),
 
         _ => Err(format!(
             "Unknown action: {}. Valid: install, uninstall, upgrade, search, list, info, detect",
@@ -339,7 +357,8 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
             Ok(json!({
                 "action": "interfaces",
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "connections" => {
@@ -366,7 +385,8 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "action": "connections",
                 "filter": filter,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "routing" => {
@@ -378,7 +398,8 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
             Ok(json!({
                 "action": "routing",
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "dns" => {
@@ -395,22 +416,21 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "host": host,
                 "tool": tool.unwrap_or_default(),
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "ping" => {
             let host = target.ok_or("Missing 'target' (host/IP) for ping")?;
-            let count = args
-                .get("count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(4);
+            let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(4);
             let output = sh(&format!("ping -c {} {} 2>&1", count, host))?;
             Ok(json!({
                 "action": "ping",
                 "target": host,
                 "count": count,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "traceroute" => {
@@ -420,7 +440,11 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 Some("mtr") => format!("mtr -r -c 3 {} 2>&1", host),
                 Some("tracepath") => format!("tracepath {} 2>&1 | head -30", host),
                 Some("traceroute") => format!("traceroute -m 20 {} 2>&1", host),
-                _ => return Err("No traceroute tool found (traceroute, tracepath, or mtr)".to_string()),
+                _ => {
+                    return Err(
+                        "No traceroute tool found (traceroute, tracepath, or mtr)".to_string()
+                    );
+                }
             };
             let output = sh(&cmd)?;
             Ok(json!({
@@ -428,7 +452,8 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "target": host,
                 "tool": tool.unwrap_or_default(),
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "whois" => {
@@ -438,7 +463,8 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "action": "whois",
                 "target": domain,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "arp" => {
@@ -446,7 +472,8 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
             Ok(json!({
                 "action": "arp",
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "public_ip" => {
@@ -456,20 +483,24 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
             Ok(json!({
                 "action": "public_ip",
                 "ip": output.trim(),
-            }).to_string())
+            })
+            .to_string())
         }
 
         "wifi" => {
             let output = if cfg!(target_os = "macos") {
-                sh("system_profiler SPAirPortDataType 2>/dev/null | head -40 || \
-                    /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I 2>/dev/null")?
+                sh(
+                    "system_profiler SPAirPortDataType 2>/dev/null | head -40 || \
+                    /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I 2>/dev/null",
+                )?
             } else {
                 sh("iwconfig 2>/dev/null || nmcli device wifi list 2>/dev/null | head -30")?
             };
             Ok(json!({
                 "action": "wifi",
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "bandwidth" => {
@@ -481,7 +512,8 @@ pub fn exec_net_info(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                         "action": "bandwidth",
                         "tool": t,
                         "output": output,
-                    }).to_string())
+                    })
+                    .to_string())
                 }
                 None => Err("No bandwidth test tool found. Install speedtest-cli.".to_string()),
             }
@@ -553,10 +585,12 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "vuln" => format!("nmap --script vuln {} 2>&1", host),
                 "ping" => format!("nmap -sn {} 2>&1", host),
                 "stealth" => format!("sudo nmap -sS -T2 {} 2>&1", host),
-                _ => return Err(format!(
-                    "Unknown scan_type: {}. Valid: quick, full, service, os, udp, vuln, ping, stealth",
-                    scan_type
-                )),
+                _ => {
+                    return Err(format!(
+                        "Unknown scan_type: {}. Valid: quick, full, service, os, udp, vuln, ping, stealth",
+                        scan_type
+                    ));
+                }
             };
 
             let output = sh(&cmd)?;
@@ -565,7 +599,8 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "target": host,
                 "scan_type": scan_type,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "tcpdump" => {
@@ -574,10 +609,7 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 .and_then(|v| v.as_str())
                 .unwrap_or("any");
             let filter = target.unwrap_or("");
-            let count = args
-                .get("count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(20);
+            let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(20);
 
             if which_first(&["tcpdump"]).is_none() {
                 return Err(
@@ -607,15 +639,17 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "filter": filter,
                 "count": count,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "port_check" => {
             let host = target.ok_or("Missing 'target' (host:port or host) for port_check")?;
-            let port = args
-                .get("port")
-                .and_then(|v| v.as_u64())
-                .or_else(|| args.get("ports").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()));
+            let port = args.get("port").and_then(|v| v.as_u64()).or_else(|| {
+                args.get("ports")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse().ok())
+            });
 
             if let Some(p) = port {
                 // Single port check with nc or /dev/tcp
@@ -630,7 +664,8 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                     "port": p,
                     "status": if output.contains("OPEN") { "open" } else { "closed" },
                     "output": output,
-                }).to_string())
+                })
+                .to_string())
             } else {
                 // Scan common ports with nc
                 let cmd = format!(
@@ -644,7 +679,8 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                     "action": "port_check",
                     "target": host,
                     "output": output,
-                }).to_string())
+                })
+                .to_string())
             }
         }
 
@@ -658,7 +694,8 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
             Ok(json!({
                 "action": "listen",
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "sniff" => {
@@ -667,10 +704,7 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 .get("interface")
                 .and_then(|v| v.as_str())
                 .unwrap_or("any");
-            let seconds = args
-                .get("seconds")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(5);
+            let seconds = args.get("seconds").and_then(|v| v.as_u64()).unwrap_or(5);
 
             let tool = which_first(&["tcpdump", "tshark"]);
             let cmd = match tool.as_deref() {
@@ -678,10 +712,7 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                     "sudo timeout {} tcpdump -i {} -c 30 -q -nn 2>&1",
                     seconds, iface
                 ),
-                Some("tshark") => format!(
-                    "timeout {} tshark -i {} -c 30 -q 2>&1",
-                    seconds, iface
-                ),
+                Some("tshark") => format!("timeout {} tshark -i {} -c 30 -q 2>&1", seconds, iface),
                 _ => return Err("No packet capture tool found (tcpdump or tshark)".to_string()),
             };
             let output = sh(&cmd)?;
@@ -691,7 +722,8 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "seconds": seconds,
                 "tool": tool.unwrap_or_default(),
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "discover" => {
@@ -713,7 +745,8 @@ pub fn exec_net_scan(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "subnet": subnet,
                 "tool": tool.unwrap_or_else(|| "arp".into()),
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         _ => Err(format!(
@@ -768,14 +801,18 @@ pub fn exec_service_manage(args: &Value, _workspace_dir: &Path) -> Result<String
                 "init_system": init,
                 "filter": filter,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "status" => {
             let svc = service.ok_or("Missing 'service' for status action")?;
             let cmd = match init {
                 "systemd" => format!("systemctl status {} --no-pager 2>&1", svc),
-                "launchd" => format!("launchctl print system/{} 2>&1 || launchctl list {} 2>&1", svc, svc),
+                "launchd" => format!(
+                    "launchctl print system/{} 2>&1 || launchctl list {} 2>&1",
+                    svc, svc
+                ),
                 "sysvinit" => format!("/etc/init.d/{} status 2>&1", svc),
                 _ => return Err(format!("Unknown init system: {}", init)),
             };
@@ -785,7 +822,8 @@ pub fn exec_service_manage(args: &Value, _workspace_dir: &Path) -> Result<String
                 "service": svc,
                 "init_system": init,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "start" => {
@@ -802,7 +840,8 @@ pub fn exec_service_manage(args: &Value, _workspace_dir: &Path) -> Result<String
                 "service": svc,
                 "init_system": init,
                 "output": if output.is_empty() { "Service started.".into() } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "stop" => {
@@ -819,7 +858,8 @@ pub fn exec_service_manage(args: &Value, _workspace_dir: &Path) -> Result<String
                 "service": svc,
                 "init_system": init,
                 "output": if output.is_empty() { "Service stopped.".into() } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "restart" => {
@@ -836,15 +876,19 @@ pub fn exec_service_manage(args: &Value, _workspace_dir: &Path) -> Result<String
                 "service": svc,
                 "init_system": init,
                 "output": if output.is_empty() { "Service restarted.".into() } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "enable" => {
             let svc = service.ok_or("Missing 'service' for enable action")?;
             let cmd = match init {
                 "systemd" => format!("sudo systemctl enable {} 2>&1", svc),
-                "launchd" => format!("sudo launchctl load -w /Library/LaunchDaemons/{}.plist 2>&1 || \
-                                     launchctl load -w ~/Library/LaunchAgents/{}.plist 2>&1", svc, svc),
+                "launchd" => format!(
+                    "sudo launchctl load -w /Library/LaunchDaemons/{}.plist 2>&1 || \
+                                     launchctl load -w ~/Library/LaunchAgents/{}.plist 2>&1",
+                    svc, svc
+                ),
                 _ => return Err("enable/disable requires systemd or launchd".to_string()),
             };
             let output = sh(&cmd)?;
@@ -853,15 +897,19 @@ pub fn exec_service_manage(args: &Value, _workspace_dir: &Path) -> Result<String
                 "service": svc,
                 "init_system": init,
                 "output": if output.is_empty() { "Service enabled.".into() } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "disable" => {
             let svc = service.ok_or("Missing 'service' for disable action")?;
             let cmd = match init {
                 "systemd" => format!("sudo systemctl disable {} 2>&1", svc),
-                "launchd" => format!("sudo launchctl unload -w /Library/LaunchDaemons/{}.plist 2>&1 || \
-                                     launchctl unload -w ~/Library/LaunchAgents/{}.plist 2>&1", svc, svc),
+                "launchd" => format!(
+                    "sudo launchctl unload -w /Library/LaunchDaemons/{}.plist 2>&1 || \
+                                     launchctl unload -w ~/Library/LaunchAgents/{}.plist 2>&1",
+                    svc, svc
+                ),
                 _ => return Err("enable/disable requires systemd or launchd".to_string()),
             };
             let output = sh(&cmd)?;
@@ -870,15 +918,13 @@ pub fn exec_service_manage(args: &Value, _workspace_dir: &Path) -> Result<String
                 "service": svc,
                 "init_system": init,
                 "output": if output.is_empty() { "Service disabled.".into() } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "logs" => {
             let svc = service.ok_or("Missing 'service' for logs action")?;
-            let lines = args
-                .get("lines")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(50);
+            let lines = args.get("lines").and_then(|v| v.as_u64()).unwrap_or(50);
             let cmd = match init {
                 "systemd" => format!("journalctl -u {} -n {} --no-pager 2>&1", svc, lines),
                 "launchd" => format!(
@@ -894,7 +940,8 @@ pub fn exec_service_manage(args: &Value, _workspace_dir: &Path) -> Result<String
                 "lines": lines,
                 "init_system": init,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         _ => Err(format!(
@@ -932,7 +979,8 @@ pub fn exec_user_manage(args: &Value, _workspace_dir: &Path) -> Result<String, S
                 "groups": groups,
                 "id": id_output,
                 "has_sudo": sudo_check,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "list_users" => {
@@ -944,7 +992,8 @@ pub fn exec_user_manage(args: &Value, _workspace_dir: &Path) -> Result<String, S
             Ok(json!({
                 "action": "list_users",
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "list_groups" => {
@@ -956,7 +1005,8 @@ pub fn exec_user_manage(args: &Value, _workspace_dir: &Path) -> Result<String, S
             Ok(json!({
                 "action": "list_groups",
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "user_info" => {
@@ -964,31 +1014,29 @@ pub fn exec_user_manage(args: &Value, _workspace_dir: &Path) -> Result<String, S
             let output = if cfg!(target_os = "macos") {
                 sh(&format!("dscl . read /Users/{} 2>&1 | head -30", user))?
             } else {
-                sh(&format!("id {} 2>&1 && getent passwd {} 2>/dev/null", user, user))?
+                sh(&format!(
+                    "id {} 2>&1 && getent passwd {} 2>/dev/null",
+                    user, user
+                ))?
             };
             Ok(json!({
                 "action": "user_info",
                 "user": user,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "add_user" => {
             let user = name.ok_or("Missing 'name' for add_user")?;
             let cmd = if cfg!(target_os = "macos") {
-                format!(
-                    "sudo sysadminctl -addUser {} -password '' 2>&1",
-                    user
-                )
+                format!("sudo sysadminctl -addUser {} -password '' 2>&1", user)
             } else {
                 let shell = args
                     .get("shell")
                     .and_then(|v| v.as_str())
                     .unwrap_or("/bin/bash");
-                format!(
-                    "sudo useradd -m -s {} {} 2>&1",
-                    shell, user
-                )
+                format!("sudo useradd -m -s {} {} 2>&1", shell, user)
             };
             let output = sh(&cmd)?;
             Ok(json!({
@@ -1020,7 +1068,10 @@ pub fn exec_user_manage(args: &Value, _workspace_dir: &Path) -> Result<String, S
                 .and_then(|v| v.as_str())
                 .ok_or("Missing 'group' for add_to_group")?;
             let cmd = if cfg!(target_os = "macos") {
-                format!("sudo dseditgroup -o edit -a {} -t user {} 2>&1", user, group)
+                format!(
+                    "sudo dseditgroup -o edit -a {} -t user {} 2>&1",
+                    user, group
+                )
             } else {
                 format!("sudo usermod -aG {} {} 2>&1", group, user)
             };
@@ -1032,7 +1083,8 @@ pub fn exec_user_manage(args: &Value, _workspace_dir: &Path) -> Result<String, S
                 "output": if output.is_empty() {
                     format!("User '{}' added to group '{}'.", user, group)
                 } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "last_logins" => {
@@ -1040,7 +1092,8 @@ pub fn exec_user_manage(args: &Value, _workspace_dir: &Path) -> Result<String, S
             Ok(json!({
                 "action": "last_logins",
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         _ => Err(format!(
@@ -1085,7 +1138,9 @@ pub fn exec_firewall(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
             let cmd = match backend {
                 "pf" => "sudo pfctl -s info 2>&1 | head -10",
                 "ufw" => "sudo ufw status verbose 2>&1",
-                "firewalld" => "sudo firewall-cmd --state 2>&1 && sudo firewall-cmd --list-all 2>&1",
+                "firewalld" => {
+                    "sudo firewall-cmd --state 2>&1 && sudo firewall-cmd --list-all 2>&1"
+                }
                 "iptables" => "sudo iptables -L -n --line-numbers 2>&1 | head -50",
                 "nftables" => "sudo nft list ruleset 2>&1 | head -50",
                 _ => return Err("No supported firewall found".to_string()),
@@ -1095,7 +1150,8 @@ pub fn exec_firewall(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "action": "status",
                 "backend": backend,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "rules" => {
@@ -1112,14 +1168,19 @@ pub fn exec_firewall(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "action": "rules",
                 "backend": backend,
                 "output": output,
-            }).to_string())
+            })
+            .to_string())
         }
 
         "allow" => {
             let port = args
                 .get("port")
                 .and_then(|v| v.as_u64())
-                .or_else(|| args.get("port").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()))
+                .or_else(|| {
+                    args.get("port")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse().ok())
+                })
                 .ok_or("Missing 'port' for allow action")?;
             let proto = args
                 .get("protocol")
@@ -1152,14 +1213,19 @@ pub fn exec_firewall(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "output": if output.is_empty() {
                     format!("Port {}/{} allowed.", port, proto)
                 } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "deny" => {
             let port = args
                 .get("port")
                 .and_then(|v| v.as_u64())
-                .or_else(|| args.get("port").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()))
+                .or_else(|| {
+                    args.get("port")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse().ok())
+                })
                 .ok_or("Missing 'port' for deny action")?;
             let proto = args
                 .get("protocol")
@@ -1188,13 +1254,16 @@ pub fn exec_firewall(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "output": if output.is_empty() {
                     format!("Port {}/{} denied.", port, proto)
                 } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "enable" => {
             let cmd = match backend {
                 "ufw" => "sudo ufw --force enable 2>&1",
-                "firewalld" => "sudo systemctl start firewalld && sudo systemctl enable firewalld 2>&1",
+                "firewalld" => {
+                    "sudo systemctl start firewalld && sudo systemctl enable firewalld 2>&1"
+                }
                 "pf" => "sudo pfctl -e 2>&1",
                 _ => return Err("No supported firewall found for enable".to_string()),
             };
@@ -1203,7 +1272,8 @@ pub fn exec_firewall(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "action": "enable",
                 "backend": backend,
                 "output": if output.is_empty() { "Firewall enabled.".into() } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         "disable" => {
@@ -1218,7 +1288,8 @@ pub fn exec_firewall(args: &Value, _workspace_dir: &Path) -> Result<String, Stri
                 "action": "disable",
                 "backend": backend,
                 "output": if output.is_empty() { "Firewall disabled.".into() } else { output },
-            }).to_string())
+            })
+            .to_string())
         }
 
         _ => Err(format!(

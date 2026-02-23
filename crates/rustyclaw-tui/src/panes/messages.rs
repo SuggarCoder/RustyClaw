@@ -9,9 +9,9 @@ use ratatui::{
 
 use crate::action::Action;
 use crate::panes::{DisplayMessage, Pane, PaneState};
-use rustyclaw_core::types::MessageRole;
-use crate::tui_palette as tp;
 use crate::tui::Frame;
+use crate::tui_palette as tp;
+use rustyclaw_core::types::MessageRole;
 
 // ── Global tab-width setting (read by get_lines) ──────────────────────
 
@@ -93,15 +93,12 @@ impl MessagesPane {
                     (tp::BORDER_THIN, tp::bubble::tool_blurred(), true)
                 }
             }
-            MessageRole::Error => {
-                (tp::BORDER_THICK, tp::bubble::error(), true)
-            }
-            MessageRole::System | MessageRole::Info | MessageRole::Success | MessageRole::Warning => {
-                (tp::BORDER_THIN, tp::bubble::system(), true)
-            }
-            MessageRole::Thinking => {
-                (tp::BORDER_THIN, tp::bubble::thinking(), true)
-            }
+            MessageRole::Error => (tp::BORDER_THICK, tp::bubble::error(), true),
+            MessageRole::System
+            | MessageRole::Info
+            | MessageRole::Success
+            | MessageRole::Warning => (tp::BORDER_THIN, tp::bubble::system(), true),
+            MessageRole::Thinking => (tp::BORDER_THIN, tp::bubble::thinking(), true),
         }
     }
 
@@ -260,13 +257,11 @@ impl Pane for MessagesPane {
                     } else {
                         0
                     };
-                let scroll_top = total.saturating_sub(
-                    if self.scroll_offset == usize::MAX {
-                        0
-                    } else {
-                        self.scroll_offset
-                    },
-                );
+                let scroll_top = total.saturating_sub(if self.scroll_offset == usize::MAX {
+                    0
+                } else {
+                    self.scroll_offset
+                });
                 let idx =
                     Self::message_index_at_visual_row(scroll_top, state.messages, 200, spacing);
                 if let Some(msg) = state.messages.get(idx) {
@@ -458,10 +453,8 @@ impl Pane for MessagesPane {
             // Render the left border stripe (Crush/OpenCode style)
             if entry.show_border && !entry.border_char.is_empty() {
                 for row in y..y + visible_h {
-                    let border_span = Span::styled(
-                        format!("{} ", entry.border_char),
-                        entry.border_style,
-                    );
+                    let border_span =
+                        Span::styled(format!("{} ", entry.border_char), entry.border_style);
                     frame.render_widget(
                         Paragraph::new(Line::from(border_span)),
                         Rect::new(area.x, row, BORDER_WIDTH, 1),
@@ -470,7 +463,11 @@ impl Pane for MessagesPane {
             }
 
             // Render the wrapped text (offset by border width)
-            let text_x = if entry.show_border { area.x + BORDER_WIDTH } else { area.x + BORDER_WIDTH };
+            let text_x = if entry.show_border {
+                area.x + BORDER_WIDTH
+            } else {
+                area.x + BORDER_WIDTH
+            };
             let text_w = area.width.saturating_sub(BORDER_WIDTH);
 
             let mut para = Paragraph::new(entry.text.clone())

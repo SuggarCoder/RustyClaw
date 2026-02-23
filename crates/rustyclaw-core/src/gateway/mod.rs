@@ -10,16 +10,16 @@ pub mod csrf;
 pub mod health;
 mod helpers;
 mod messenger_handler;
-mod providers;
 pub mod protocol;
+mod providers;
 mod secrets_handler;
 mod skills_handler;
 mod types;
 
 // Re-export protocol types
 pub use protocol::{
-    ClientFrameType, ServerFrameType, StatusType, ServerFrame, ClientFrame,
-    serialize_frame, deserialize_frame, ServerPayload, ClientPayload, SecretEntryDto,
+    ClientFrame, ClientFrameType, ClientPayload, SecretEntryDto, ServerFrame, ServerFrameType,
+    ServerPayload, StatusType, deserialize_frame, serialize_frame,
 };
 
 // Re-export public types (includes protocol types via types module)
@@ -29,9 +29,7 @@ pub use types::{
 };
 
 // Re-export messenger handler types
-pub use messenger_handler::{
-    create_messenger_manager, run_messenger_loop, SharedMessengerManager,
-};
+pub use messenger_handler::{SharedMessengerManager, create_messenger_manager, run_messenger_loop};
 
 use crate::config::Config;
 use crate::providers as crate_providers;
@@ -43,13 +41,13 @@ use dirs;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
@@ -83,12 +81,12 @@ pub type SharedModelCtx = Arc<RwLock<Option<Arc<ModelContext>>>>;
 
 // Re-export protocol helpers for external use
 pub use protocol::server::{
-    parse_client_frame, send_frame,
-    send_vault_unlocked, send_secrets_list_result,
-    send_secrets_store_result, send_secrets_get_result, send_secrets_delete_result,
-    send_secrets_peek_result, send_secrets_set_policy_result, send_secrets_set_disabled_result,
-    send_secrets_delete_credential_result, send_secrets_has_totp_result, send_secrets_setup_totp_result,
-    send_secrets_verify_totp_result, send_secrets_remove_totp_result, send_reload_result,
+    parse_client_frame, send_frame, send_reload_result, send_secrets_delete_credential_result,
+    send_secrets_delete_result, send_secrets_get_result, send_secrets_has_totp_result,
+    send_secrets_list_result, send_secrets_peek_result, send_secrets_remove_totp_result,
+    send_secrets_set_disabled_result, send_secrets_set_policy_result,
+    send_secrets_setup_totp_result, send_secrets_store_result, send_secrets_verify_totp_result,
+    send_vault_unlocked,
 };
 
 // Re-export validate_model_connection for external use
@@ -132,7 +130,10 @@ fn try_import_openclaw_token(vault: &mut SecretsManager) -> Option<CopilotSessio
         return None;
     }
 
-    info!(remaining_hours = remaining / 3600, "Auto-imported fresh token from OpenClaw");
+    info!(
+        remaining_hours = remaining / 3600,
+        "Auto-imported fresh token from OpenClaw"
+    );
 
     // Store in our vault for next time
     let session_data = serde_json::json!({
@@ -143,7 +144,10 @@ fn try_import_openclaw_token(vault: &mut SecretsManager) -> Option<CopilotSessio
         warn!(error = %e, "Failed to cache imported token in vault");
     }
 
-    Some(CopilotSession::from_session_token(token.to_string(), expires_at))
+    Some(CopilotSession::from_session_token(
+        token.to_string(),
+        expires_at,
+    ))
 }
 
 /// Run the gateway WebSocket server.
@@ -322,7 +326,9 @@ pub async fn run_gateway(
                         messenger_vault,
                         messenger_skills,
                         messenger_cancel,
-                    ).await {
+                    )
+                    .await
+                    {
                         error!(error = %e, "Messenger loop error");
                     }
                 });
@@ -456,8 +462,7 @@ async fn handle_connection(
                     };
                     if valid {
                         auth::clear_rate_limit(&rate_limiter, peer_ip).await;
-                        protocol::server::send_auth_result(&mut writer, true, None, None)
-                            .await?;
+                        protocol::server::send_auth_result(&mut writer, true, None, None).await?;
                         break; // Authentication successful, continue to main loop
                     } else {
                         attempts += 1;
@@ -468,8 +473,13 @@ async fn handle_connection(
                                 "Invalid code. Too many failures — locked out for {}s.",
                                 TOTP_LOCKOUT_SECS,
                             );
-                            protocol::server::send_auth_result(&mut writer, false, Some(&msg), None)
-                                .await?;
+                            protocol::server::send_auth_result(
+                                &mut writer,
+                                false,
+                                Some(&msg),
+                                None,
+                            )
+                            .await?;
                             writer.send(Message::Close(None)).await?;
                             return Ok(());
                         } else if attempts >= MAX_TOTP_ATTEMPTS {
@@ -485,8 +495,13 @@ async fn handle_connection(
                                 remaining,
                                 if remaining == 1 { "" } else { "s" }
                             );
-                            protocol::server::send_auth_result(&mut writer, false, Some(&msg), Some(true))
-                                .await?;
+                            protocol::server::send_auth_result(
+                                &mut writer,
+                                false,
+                                Some(&msg),
+                                Some(true),
+                            )
+                            .await?;
                             // Continue loop to allow retry
                         }
                     }
@@ -602,7 +617,13 @@ async fn handle_connection(
             .await
             .context("Failed to send model_connecting status")?;
 
-            match providers::validate_model_connection(&http, &probe_ctx, copilot_session.as_deref()).await {
+            match providers::validate_model_connection(
+                &http,
+                &probe_ctx,
+                copilot_session.as_deref(),
+            )
+            .await
+            {
                 ProbeResult::Ready => {
                     protocol::server::send_status(
                         &mut writer,
@@ -1196,10 +1217,7 @@ async fn execute_user_prompt(
                                 .get("default")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string()),
-                            required: f
-                                .get("required")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false),
+                            required: f.get("required").and_then(|v| v.as_bool()).unwrap_or(false),
                         })
                         .collect()
                 })
@@ -1227,12 +1245,7 @@ async fn execute_user_prompt(
         }
     };
 
-    if let Err(e) = protocol::server::send_user_prompt_request(
-        writer,
-        call_id,
-        &prompt_json,
-    )
-    .await
+    if let Err(e) = protocol::server::send_user_prompt_request(writer, call_id, &prompt_json).await
     {
         return (format!("Failed to send user prompt: {}", e), true);
     }
@@ -1246,9 +1259,15 @@ async fn execute_user_prompt(
     match rx_result {
         Ok(Some((id, dismissed, value))) if id == call_id => {
             if dismissed {
-                ("User dismissed the prompt without answering.".to_string(), false)
+                (
+                    "User dismissed the prompt without answering.".to_string(),
+                    false,
+                )
             } else {
-                (serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()), false)
+                (
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()),
+                    false,
+                )
             }
         }
         Ok(Some(_)) => ("Mismatched prompt response ID.".to_string(), true),
@@ -1290,7 +1309,9 @@ async fn dispatch_text_message(
                     message: msg,
                 },
             };
-            send_frame(writer, &error_frame).await.context("Failed to send error frame")?;
+            send_frame(writer, &error_frame)
+                .await
+                .context("Failed to send error frame")?;
             return Ok(());
         }
     };
@@ -1352,7 +1373,8 @@ async fn dispatch_text_message(
         {
             Ok(token) => resolved.api_key = token,
             Err(err) => {
-                protocol::server::send_error(writer, &format!("Token refresh failed: {}", err)).await?;
+                protocol::server::send_error(writer, &format!("Token refresh failed: {}", err))
+                    .await?;
                 return Ok(());
             }
         }
@@ -1367,35 +1389,34 @@ async fn dispatch_text_message(
 
             // Inject memory flush prompt
             // The agent will process this and can use tools to write to memory files
-            resolved.messages.push(ChatMessage::text("system", &system_msg));
+            resolved
+                .messages
+                .push(ChatMessage::text("system", &system_msg));
             resolved.messages.push(ChatMessage::text("user", &user_msg));
 
             // Mark as flushed to prevent repeated injections
             memory_flush.mark_flushed();
 
             // Notify the TUI about the memory flush
-            let _ = protocol::server::send_info(
-                writer,
-                "💾 Memory flush triggered before compaction"
-            ).await;
+            let _ =
+                protocol::server::send_info(writer, "💾 Memory flush triggered before compaction")
+                    .await;
         }
 
         // ── Auto-compact if context is getting large ────────────────
         // Proceed with compaction if over threshold
         if estimated > threshold {
-            match providers::compact_conversation(
-                http,
-                &mut resolved,
-                context_limit,
-                writer,
-            )
-            .await
+            match providers::compact_conversation(http, &mut resolved, context_limit, writer).await
             {
                 Ok(()) => {} // compacted in-place
                 Err(err) => {
                     // Non-fatal — log a warning and keep going with the
                     // full context; the provider may still accept it.
-                    let _ = protocol::server::send_info(writer, &format!("Context compaction failed: {}", err)).await;
+                    let _ = protocol::server::send_info(
+                        writer,
+                        &format!("Context compaction failed: {}", err),
+                    )
+                    .await;
                 }
             }
         }
@@ -1446,8 +1467,8 @@ async fn dispatch_text_message(
                 // Guard: only trigger for SHORT responses (< 500 chars).
                 // Long responses (e.g., a capabilities listing) are always
                 // complete answers and must never be auto-continued.
-                let consider_continuation = model_resp.text.len() < 500
-                    && consecutive_continues < MAX_AUTO_CONTINUES;
+                let consider_continuation =
+                    model_resp.text.len() < 500 && consecutive_continues < MAX_AUTO_CONTINUES;
 
                 let should_continue = if consider_continuation {
                     // Check only the tail of the response for intent patterns.
@@ -1486,12 +1507,10 @@ async fn dispatch_text_message(
                         "let me help",
                     ];
 
-                    let has_exclusion = NON_ACTION_PHRASES
-                        .iter()
-                        .any(|p| text_lower.contains(p));
+                    let has_exclusion = NON_ACTION_PHRASES.iter().any(|p| text_lower.contains(p));
 
-                    let text_suggests_action = !has_exclusion
-                        && INTENT_PATTERNS.iter().any(|p| tail.contains(p));
+                    let text_suggests_action =
+                        !has_exclusion && INTENT_PATTERNS.iter().any(|p| tail.contains(p));
 
                     // Also trigger if response ends with colon (about to list/show)
                     let ends_with_continuation = tail.trim_end().ends_with(':');
@@ -1516,7 +1535,9 @@ async fn dispatch_text_message(
                     // cause the TUI to show the same text twice.
 
                     // Append assistant message and continuation prompt
-                    resolved.messages.push(ChatMessage::text("assistant", &model_resp.text));
+                    resolved
+                        .messages
+                        .push(ChatMessage::text("assistant", &model_resp.text));
                     resolved.messages.push(ChatMessage::text(
                         "user",
                         "Continue. Execute the action you described.",
@@ -1531,13 +1552,21 @@ async fn dispatch_text_message(
                 return Ok(());
             } else if finish_reason == "length" {
                 // Hit token limit — warn and stop
-                protocol::server::send_info(writer, "Response truncated due to token limit.").await?;
+                protocol::server::send_info(writer, "Response truncated due to token limit.")
+                    .await?;
                 providers::send_response_done(writer).await?;
                 return Ok(());
             } else {
                 // Unexpected finish_reason with no tool calls
                 // Log it and treat as done (better than looping forever)
-                protocol::server::send_info(writer, &format!("Model finished with reason '{}' but no tool calls.", finish_reason)).await?;
+                protocol::server::send_info(
+                    writer,
+                    &format!(
+                        "Model finished with reason '{}' but no tool calls.",
+                        finish_reason
+                    ),
+                )
+                .await?;
                 providers::send_response_done(writer).await?;
                 return Ok(());
             }
@@ -1557,10 +1586,7 @@ async fn dispatch_text_message(
 
         for tc in &model_resp.tool_calls {
             // ── Permission check ────────────────────────────────────
-            let permission = tool_permissions
-                .get(&tc.name)
-                .cloned()
-                .unwrap_or_default(); // default = Allow
+            let permission = tool_permissions.get(&tc.name).cloned().unwrap_or_default(); // default = Allow
 
             let (output, is_error) = match permission {
                 tools::ToolPermission::Deny => {
@@ -1570,7 +1596,8 @@ async fn dispatch_text_message(
                         &tc.id,
                         &tc.name,
                         tc.arguments.clone(),
-                    ).await?;
+                    )
+                    .await?;
 
                     let msg = format!(
                         "Tool '{}' is denied by user policy. The user has blocked this tool from being executed.",
@@ -1585,7 +1612,8 @@ async fn dispatch_text_message(
                         &tc.id,
                         &tc.name,
                         tc.arguments.clone(),
-                    ).await?;
+                    )
+                    .await?;
 
                     let msg = format!(
                         "Tool '{}' is restricted to skill-based invocations only. It cannot be used in direct chat.",
@@ -1600,15 +1628,15 @@ async fn dispatch_text_message(
                         &tc.id,
                         &tc.name,
                         tc.arguments.clone(),
-                    ).await?;
+                    )
+                    .await?;
 
                     // Wait for the user's response (with timeout).
                     let approved = {
                         let mut rx = approval_rx.lock().await;
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(120),
-                            rx.recv(),
-                        ).await {
+                        match tokio::time::timeout(std::time::Duration::from_secs(120), rx.recv())
+                            .await
+                        {
                             Ok(Some((id, approved))) if id == tc.id => approved,
                             Ok(Some(_)) => false, // Mismatched ID — treat as denied
                             Ok(None) => false,    // Channel closed
@@ -1623,12 +1651,10 @@ async fn dispatch_text_message(
                             &tc.id,
                             &tc.name,
                             tc.arguments.clone(),
-                        ).await?;
+                        )
+                        .await?;
 
-                        let msg = format!(
-                            "Tool '{}' was denied by the user.",
-                            tc.name
-                        );
+                        let msg = format!("Tool '{}' was denied by the user.", tc.name);
                         (msg, true)
                     } else {
                         // User approved — proceed with execution.
@@ -1637,17 +1663,30 @@ async fn dispatch_text_message(
                             &tc.id,
                             &tc.name,
                             tc.arguments.clone(),
-                        ).await?;
+                        )
+                        .await?;
 
                         if tools::is_user_prompt_tool(&tc.name) {
                             execute_user_prompt(writer, &tc.id, &tc.arguments, user_prompt_rx).await
                         } else if tools::is_secrets_tool(&tc.name) {
-                            match secrets_handler::execute_secrets_tool(&tc.name, &tc.arguments, vault).await {
+                            match secrets_handler::execute_secrets_tool(
+                                &tc.name,
+                                &tc.arguments,
+                                vault,
+                            )
+                            .await
+                            {
                                 Ok(text) => (text, false),
                                 Err(err) => (err, true),
                             }
                         } else if tools::is_skill_tool(&tc.name) {
-                            match skills_handler::execute_skill_tool(&tc.name, &tc.arguments, skill_mgr).await {
+                            match skills_handler::execute_skill_tool(
+                                &tc.name,
+                                &tc.arguments,
+                                skill_mgr,
+                            )
+                            .await
+                            {
                                 Ok(text) => (text, false),
                                 Err(err) => (err, true),
                             }
@@ -1666,18 +1705,23 @@ async fn dispatch_text_message(
                         &tc.id,
                         &tc.name,
                         tc.arguments.clone(),
-                    ).await?;
+                    )
+                    .await?;
 
                     // Execute the tool.
                     if tools::is_user_prompt_tool(&tc.name) {
                         execute_user_prompt(writer, &tc.id, &tc.arguments, user_prompt_rx).await
                     } else if tools::is_secrets_tool(&tc.name) {
-                        match secrets_handler::execute_secrets_tool(&tc.name, &tc.arguments, vault).await {
+                        match secrets_handler::execute_secrets_tool(&tc.name, &tc.arguments, vault)
+                            .await
+                        {
                             Ok(text) => (text, false),
                             Err(err) => (err, true),
                         }
                     } else if tools::is_skill_tool(&tc.name) {
-                        match skills_handler::execute_skill_tool(&tc.name, &tc.arguments, skill_mgr).await {
+                        match skills_handler::execute_skill_tool(&tc.name, &tc.arguments, skill_mgr)
+                            .await
+                        {
                             Ok(text) => (text, false),
                             Err(err) => (err, true),
                         }
@@ -1694,13 +1738,7 @@ async fn dispatch_text_message(
             let output = tools::sanitize_tool_output(output);
 
             // Notify the client about the result.
-            protocol::server::send_tool_result(
-                writer,
-                &tc.id,
-                &tc.name,
-                &output,
-                is_error,
-            ).await?;
+            protocol::server::send_tool_result(writer, &tc.id, &tc.name, &output, is_error).await?;
 
             tool_results.push(ToolCallResult {
                 id: tc.id.clone(),
@@ -1724,8 +1762,12 @@ async fn dispatch_text_message(
     // If we exhausted all rounds, send what we have and stop.
     protocol::server::send_error(
         writer,
-        &format!("Safety limit reached ({} tool rounds) — stopping to prevent infinite loop.", MAX_TOOL_ROUNDS),
-    ).await?;
+        &format!(
+            "Safety limit reached ({} tool rounds) — stopping to prevent infinite loop.",
+            MAX_TOOL_ROUNDS
+        ),
+    )
+    .await?;
     providers::send_response_done(writer).await?;
     Ok(())
 }

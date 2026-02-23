@@ -4,7 +4,7 @@ use super::helpers::vault;
 use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
 /// Fetch a URL and extract readable content as markdown or plain text.
 ///
@@ -44,8 +44,7 @@ pub fn exec_web_fetch(args: &Value, _workspace_dir: &Path) -> Result<String, Str
     }
 
     // Parse URL for domain extraction
-    let parsed_url =
-        url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
+    let parsed_url = url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
     let domain = parsed_url
         .host_str()
         .ok_or_else(|| "URL has no host".to_string())?;
@@ -72,12 +71,10 @@ pub fn exec_web_fetch(args: &Value, _workspace_dir: &Path) -> Result<String, Str
         }
     }
 
-    let response = request
-        .send()
-        .map_err(|e| {
-            warn!(error = %e, "HTTP request failed");
-            format!("HTTP request failed: {}", e)
-        })?;
+    let response = request.send().map_err(|e| {
+        warn!(error = %e, "HTTP request failed");
+        format!("HTTP request failed: {}", e)
+    })?;
 
     let status = response.status();
     debug!(status = status.as_u16(), "Received HTTP response");
@@ -317,10 +314,7 @@ pub fn exec_web_search(args: &Value, _workspace_dir: &Path) -> Result<String, St
         .min(10)
         .max(1) as usize;
 
-    let country = args
-        .get("country")
-        .and_then(|v| v.as_str())
-        .unwrap_or("US");
+    let country = args.get("country").and_then(|v| v.as_str()).unwrap_or("US");
 
     let search_lang = args.get("search_lang").and_then(|v| v.as_str());
     let freshness = args.get("freshness").and_then(|v| v.as_str());

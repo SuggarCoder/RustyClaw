@@ -1,12 +1,12 @@
 use anyhow::Result;
 use ratatui::{
-    layout::{Constraint, Layout, Direction, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
 };
 
 use crate::panes::{Pane, PaneState};
-use crate::tui_palette as tp;
 use crate::tui::Frame;
+use crate::tui_palette as tp;
 
 #[derive(Default)]
 pub struct HeaderPane {}
@@ -67,7 +67,10 @@ impl Pane for HeaderPane {
             ("○ secrets", Style::default().fg(tp::MUTED))
         };
 
-        let right1 = Line::from(vec![Span::styled(secrets_label, secrets_style), Span::raw(" ")]);
+        let right1 = Line::from(vec![
+            Span::styled(secrets_label, secrets_style),
+            Span::raw(" "),
+        ]);
 
         // Render left and right on line 1 by splitting horizontally
         let cols1 = Layout::default()

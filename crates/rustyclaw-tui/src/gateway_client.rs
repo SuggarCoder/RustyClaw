@@ -3,8 +3,8 @@
 //! This module provides helpers for the TUI client to convert server frames
 //! into application actions.
 
-use rustyclaw_core::gateway::{ServerFrame, ServerPayload, StatusType};
 use crate::action::Action;
+use rustyclaw_core::gateway::{ServerFrame, ServerPayload, StatusType};
 
 /// Result of processing a server frame - includes optional action and whether to update UI.
 pub struct FrameAction {
@@ -233,7 +233,8 @@ pub fn server_frame_to_action(frame: &ServerFrame) -> FrameAction {
             arguments: arguments.clone(),
         }),
         ServerPayload::UserPromptRequest { id, prompt_json } => {
-            match serde_json::from_str::<rustyclaw_core::user_prompt_types::UserPrompt>(prompt_json) {
+            match serde_json::from_str::<rustyclaw_core::user_prompt_types::UserPrompt>(prompt_json)
+            {
                 Ok(mut prompt) => {
                     prompt.id = id.clone();
                     FrameAction::just_action(Action::UserPromptRequest(prompt))
@@ -277,7 +278,7 @@ mod tests {
     mod action_conversion {
         use super::*;
         use crate::action::Action;
-        use rustyclaw_core::gateway::{ServerFrameType, SecretEntryDto};
+        use rustyclaw_core::gateway::{SecretEntryDto, ServerFrameType};
 
         #[test]
         fn test_hello_frame_to_action() {

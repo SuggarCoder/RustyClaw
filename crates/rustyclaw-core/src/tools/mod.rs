@@ -6,27 +6,27 @@ pub mod agent_setup;
 // native schema (OpenAI function-calling, Anthropic tool-use, Google
 // function declarations).
 
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
-mod helpers;
-mod file;
-mod runtime;
-mod web;
-mod memory_tools;
-mod cron_tool;
-mod sessions_tools;
-mod patch;
-mod gateway_tools;
-mod devices;
 mod browser;
-mod skills_tools;
-mod secrets_tools;
-mod system_tools;
-mod sysadmin;
+mod cron_tool;
+mod devices;
 pub mod exo_ai;
+mod file;
+mod gateway_tools;
+mod helpers;
+mod memory_tools;
 pub mod npm;
 pub mod ollama;
+mod patch;
+mod runtime;
+mod secrets_tools;
+mod sessions_tools;
+mod skills_tools;
+mod sysadmin;
+mod system_tools;
 pub mod uv;
+mod web;
 // UV tool
 use uv::exec_uv_manage;
 
@@ -39,15 +39,16 @@ mod params;
 
 // Re-export helpers for external use
 pub use helpers::{
-    process_manager, set_credentials_dir, is_protected_path,
-    expand_tilde, VAULT_ACCESS_DENIED, command_references_credentials,
-    init_sandbox, sandbox, run_sandboxed_command,
-    set_vault, vault, SharedVault,
-    sanitize_tool_output,
+    SharedVault, VAULT_ACCESS_DENIED, command_references_credentials, expand_tilde, init_sandbox,
+    is_protected_path, process_manager, run_sandboxed_command, sandbox, sanitize_tool_output,
+    set_credentials_dir, set_vault, vault,
 };
 
 // File operations
-use file::{exec_read_file, exec_write_file, exec_edit_file, exec_list_directory, exec_search_files, exec_find_files};
+use file::{
+    exec_edit_file, exec_find_files, exec_list_directory, exec_read_file, exec_search_files,
+    exec_write_file,
+};
 
 // Runtime operations
 use runtime::{exec_execute_command, exec_process};
@@ -56,44 +57,49 @@ use runtime::{exec_execute_command, exec_process};
 use web::{exec_web_fetch, exec_web_search};
 
 // Memory operations
-use memory_tools::{exec_memory_search, exec_memory_get};
+use memory_tools::{exec_memory_get, exec_memory_search};
 
 // Cron operations
 use cron_tool::exec_cron;
 
 // Session operations
-use sessions_tools::{exec_sessions_list, exec_sessions_spawn, exec_sessions_send, exec_sessions_history, exec_session_status, exec_agents_list};
+use sessions_tools::{
+    exec_agents_list, exec_session_status, exec_sessions_history, exec_sessions_list,
+    exec_sessions_send, exec_sessions_spawn,
+};
 
 // Patch operations
 use patch::exec_apply_patch;
 
 // Gateway operations
-use gateway_tools::{exec_gateway, exec_message, exec_tts, exec_image};
+use gateway_tools::{exec_gateway, exec_image, exec_message, exec_tts};
 
 // Device operations
-use devices::{exec_nodes, exec_canvas};
+use devices::{exec_canvas, exec_nodes};
 
 // Browser automation (separate module with feature-gated implementation)
 use browser::exec_browser;
 
 // Skill operations
-use skills_tools::{exec_skill_list, exec_skill_search, exec_skill_install, exec_skill_info, exec_skill_enable, exec_skill_link_secret, exec_skill_create};
+use skills_tools::{
+    exec_skill_create, exec_skill_enable, exec_skill_info, exec_skill_install,
+    exec_skill_link_secret, exec_skill_list, exec_skill_search,
+};
 
 // Secrets operations
 use secrets_tools::exec_secrets_stub;
 
 // System tools
 use system_tools::{
-    exec_disk_usage, exec_classify_files, exec_system_monitor,
-    exec_battery_health, exec_app_index, exec_cloud_browse,
-    exec_browser_cache, exec_screenshot, exec_clipboard,
-    exec_audit_sensitive, exec_secure_delete, exec_summarize_file,
+    exec_app_index, exec_audit_sensitive, exec_battery_health, exec_browser_cache,
+    exec_classify_files, exec_clipboard, exec_cloud_browse, exec_disk_usage, exec_screenshot,
+    exec_secure_delete, exec_summarize_file, exec_system_monitor,
 };
 
 // System administration tools
 use sysadmin::{
-    exec_pkg_manage, exec_net_info, exec_net_scan,
-    exec_service_manage, exec_user_manage, exec_firewall,
+    exec_firewall, exec_net_info, exec_net_scan, exec_pkg_manage, exec_service_manage,
+    exec_user_manage,
 };
 
 // Exo AI tools
@@ -110,7 +116,7 @@ fn exec_ask_user_stub(_args: &Value, _workspace_dir: &Path) -> Result<String, St
 }
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 // ── Tool permissions ────────────────────────────────────────────────────────
@@ -357,7 +363,7 @@ pub static READ_FILE: ToolDef = ToolDef {
                   If you have an absolute path from find_files or search_files, \
                   pass it exactly as-is. Use the optional start_line / end_line \
                   parameters to read a specific range (1-based, inclusive).",
-    parameters: vec![],  // filled by init; see `read_file_params()`.
+    parameters: vec![], // filled by init; see `read_file_params()`.
     execute: exec_read_file,
 };
 
@@ -685,7 +691,6 @@ pub static SKILL_CREATE: ToolDef = ToolDef {
     parameters: vec![],
     execute: exec_skill_create,
 };
-
 
 // ── System tools ────────────────────────────────────────────────────────────
 
@@ -1446,7 +1451,10 @@ mod tests {
     #[test]
     fn test_resolve_path_relative() {
         let result = helpers::resolve_path(Path::new("/workspace"), "relative/path.txt");
-        assert_eq!(result, std::path::PathBuf::from("/workspace/relative/path.txt"));
+        assert_eq!(
+            result,
+            std::path::PathBuf::from("/workspace/relative/path.txt")
+        );
     }
 
     // ── web_fetch ───────────────────────────────────────────────────
@@ -1472,9 +1480,17 @@ mod tests {
         let params = web_fetch_params();
         assert_eq!(params.len(), 4);
         assert!(params.iter().any(|p| p.name == "url" && p.required));
-        assert!(params.iter().any(|p| p.name == "extract_mode" && !p.required));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "extract_mode" && !p.required)
+        );
         assert!(params.iter().any(|p| p.name == "max_chars" && !p.required));
-        assert!(params.iter().any(|p| p.name == "use_cookies" && !p.required));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "use_cookies" && !p.required)
+        );
     }
 
     // ── web_search ──────────────────────────────────────────────────
@@ -1505,7 +1521,11 @@ mod tests {
         assert!(params.iter().any(|p| p.name == "query" && p.required));
         assert!(params.iter().any(|p| p.name == "count" && !p.required));
         assert!(params.iter().any(|p| p.name == "country" && !p.required));
-        assert!(params.iter().any(|p| p.name == "search_lang" && !p.required));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "search_lang" && !p.required)
+        );
         assert!(params.iter().any(|p| p.name == "freshness" && !p.required));
     }
 
@@ -1565,8 +1585,16 @@ mod tests {
         assert!(params.iter().any(|p| p.name == "query" && p.required));
         assert!(params.iter().any(|p| p.name == "maxResults" && !p.required));
         assert!(params.iter().any(|p| p.name == "minScore" && !p.required));
-        assert!(params.iter().any(|p| p.name == "recencyBoost" && !p.required));
-        assert!(params.iter().any(|p| p.name == "halfLifeDays" && !p.required));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "recencyBoost" && !p.required)
+        );
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "halfLifeDays" && !p.required)
+        );
     }
 
     #[test]

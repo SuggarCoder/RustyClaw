@@ -13,8 +13,8 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use crate::action::Action;
 use crate::pages::Page;
 use crate::panes::PaneState;
-use crate::tui_palette as tp;
 use crate::tui::{EventResponse, Frame};
+use crate::tui_palette as tp;
 
 /// Animation states for the hatching sequence
 #[derive(Debug, Clone, PartialEq)]
@@ -128,7 +128,7 @@ impl Hatching {
             } else {
                 text.trim().to_string()
             };
-            
+
             self.state = HatchState::Awakened { identity };
         }
         None
@@ -280,9 +280,9 @@ impl Hatching {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),  // Header
-                Constraint::Min(4),     // Identity preview
-                Constraint::Length(3),  // Footer
+                Constraint::Length(5), // Header
+                Constraint::Min(4),    // Identity preview
+                Constraint::Length(3), // Footer
             ])
             .split(inner);
 

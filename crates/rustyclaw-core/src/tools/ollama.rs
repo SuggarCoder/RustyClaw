@@ -4,7 +4,7 @@
 // setup/install, pull/remove models, list/show/load/unload, running model
 // status, and serve control.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
 
@@ -90,7 +90,11 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
         "setup" | "install" => {
             if is_ollama_installed() {
                 let version = sh("ollama --version").unwrap_or_else(|_| "unknown".into());
-                let running = if is_ollama_running() { "running" } else { "stopped" };
+                let running = if is_ollama_running() {
+                    "running"
+                } else {
+                    "stopped"
+                };
                 return Ok(format!(
                     "Ollama is already installed ({}). Server status: {}.",
                     version.trim(),
@@ -101,7 +105,10 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
             let install_result = match os {
                 "macos" => sh("brew install ollama 2>&1"),
                 "linux" => sh("curl -fsSL https://ollama.com/install.sh | sh 2>&1"),
-                _ => Err(format!("Unsupported OS for automatic install: {}. Visit https://ollama.com/download", os)),
+                _ => Err(format!(
+                    "Unsupported OS for automatic install: {}. Visit https://ollama.com/download",
+                    os
+                )),
             };
             match install_result {
                 Ok(out) => Ok(format!("Ollama installed successfully.\n{}", out)),
@@ -120,7 +127,9 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
             let os = std::env::consts::OS;
             match os {
                 "macos" => {
-                    let _ = sh("brew services start ollama 2>/dev/null || nohup ollama serve > /dev/null 2>&1 &");
+                    let _ = sh(
+                        "brew services start ollama 2>/dev/null || nohup ollama serve > /dev/null 2>&1 &",
+                    );
                 }
                 _ => {
                     let _ = sh("nohup ollama serve > /dev/null 2>&1 &");
@@ -141,7 +150,9 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
             }
             let os = std::env::consts::OS;
             match os {
-                "macos" => sh("brew services stop ollama 2>/dev/null; pkill -f 'ollama serve' 2>/dev/null; echo 'Ollama server stopped.'"),
+                "macos" => sh(
+                    "brew services stop ollama 2>/dev/null; pkill -f 'ollama serve' 2>/dev/null; echo 'Ollama server stopped.'",
+                ),
                 _ => sh("pkill -f 'ollama serve' 2>/dev/null; echo 'Ollama server stopped.'"),
             }
         }
@@ -159,7 +170,11 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
                 match ollama_api("GET", "/api/tags", None) {
                     Ok(resp) => {
                         if let Ok(parsed) = serde_json::from_str::<Value>(&resp) {
-                            let count = parsed.get("models").and_then(|m| m.as_array()).map(|a| a.len()).unwrap_or(0);
+                            let count = parsed
+                                .get("models")
+                                .and_then(|m| m.as_array())
+                                .map(|a| a.len())
+                                .unwrap_or(0);
                             format!("{} model(s) available", count)
                         } else {
                             "unable to parse".into()
@@ -177,8 +192,13 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
                             let ms = parsed.get("models").and_then(|m| m.as_array());
                             match ms {
                                 Some(arr) if !arr.is_empty() => {
-                                    let names: Vec<String> = arr.iter()
-                                        .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                                    let names: Vec<String> = arr
+                                        .iter()
+                                        .filter_map(|m| {
+                                            m.get("name")
+                                                .and_then(|n| n.as_str())
+                                                .map(|s| s.to_string())
+                                        })
                                         .collect();
                                     format!("loaded: {}", names.join(", "))
                                 }
@@ -199,22 +219,28 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
                 "version": version.trim(),
                 "models": models,
                 "loaded": loaded,
-            }).to_string())
+            })
+            .to_string())
         }
 
         // ── pull (add/download a model) ─────────────────────────
         "pull" | "add" | "download" => {
-            let model = args.get("model").and_then(|v| v.as_str())
-                .ok_or("Missing required parameter: model (e.g. 'llama3.1', 'mistral', 'codellama')")?;
+            let model = args.get("model").and_then(|v| v.as_str()).ok_or(
+                "Missing required parameter: model (e.g. 'llama3.1', 'mistral', 'codellama')",
+            )?;
             if !is_ollama_running() {
-                return Err("Ollama server is not running. Start it with action 'serve' first.".into());
+                return Err(
+                    "Ollama server is not running. Start it with action 'serve' first.".into(),
+                );
             }
             sh(&format!("ollama pull {} 2>&1", model))
         }
 
         // ── rm (remove a model) ─────────────────────────────────
         "rm" | "remove" | "delete" => {
-            let model = args.get("model").and_then(|v| v.as_str())
+            let model = args
+                .get("model")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: model")?;
             if !is_ollama_running() {
                 return Err("Ollama server is not running.".into());
@@ -233,21 +259,30 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
                         let models = parsed.get("models").and_then(|m| m.as_array());
                         match models {
                             Some(arr) if !arr.is_empty() => {
-                                let mut lines = vec!["NAME                      SIZE       MODIFIED".to_string()];
+                                let mut lines = vec![
+                                    "NAME                      SIZE       MODIFIED".to_string(),
+                                ];
                                 for m in arr {
-                                    let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                                    let name =
+                                        m.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                                     let size = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
                                     let size_str = if size > 1_000_000_000 {
                                         format!("{:.1} GB", size as f64 / 1e9)
                                     } else {
                                         format!("{:.0} MB", size as f64 / 1e6)
                                     };
-                                    let modified = m.get("modified_at").and_then(|d| d.as_str()).unwrap_or("?");
+                                    let modified = m
+                                        .get("modified_at")
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or("?");
                                     lines.push(format!("{:<26}{:<11}{}", name, size_str, modified));
                                 }
                                 Ok(lines.join("\n"))
                             }
-                            _ => Ok("No models downloaded. Use action 'pull' to download one.".into()),
+                            _ => {
+                                Ok("No models downloaded. Use action 'pull' to download one."
+                                    .into())
+                            }
                         }
                     } else {
                         Ok(resp)
@@ -259,7 +294,9 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
 
         // ── show (model details) ────────────────────────────────
         "show" | "info" => {
-            let model = args.get("model").and_then(|v| v.as_str())
+            let model = args
+                .get("model")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: model")?;
             sh(&format!("ollama show {} 2>&1", model))
         }
@@ -275,16 +312,26 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
                         let models = parsed.get("models").and_then(|m| m.as_array());
                         match models {
                             Some(arr) if !arr.is_empty() => {
-                                let mut lines = vec!["NAME                      SIZE       PROCESSOR    EXPIRES".to_string()];
+                                let mut lines = vec![
+                                    "NAME                      SIZE       PROCESSOR    EXPIRES"
+                                        .to_string(),
+                                ];
                                 for m in arr {
-                                    let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                                    let name =
+                                        m.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                                     let size = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
                                     let size_str = format!("{:.0} MB", size as f64 / 1e6);
-                                    let proc = m.get("size_vram").and_then(|s| s.as_u64())
+                                    let proc = m
+                                        .get("size_vram")
+                                        .and_then(|s| s.as_u64())
                                         .map(|v| if v > 0 { "GPU" } else { "CPU" })
                                         .unwrap_or("?");
-                                    let expires = m.get("expires_at").and_then(|d| d.as_str()).unwrap_or("?");
-                                    lines.push(format!("{:<26}{:<11}{:<13}{}", name, size_str, proc, expires));
+                                    let expires =
+                                        m.get("expires_at").and_then(|d| d.as_str()).unwrap_or("?");
+                                    lines.push(format!(
+                                        "{:<26}{:<11}{:<13}{}",
+                                        name, size_str, proc, expires
+                                    ));
                                 }
                                 Ok(lines.join("\n"))
                             }
@@ -300,7 +347,9 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
 
         // ── load (warm a model into memory) ─────────────────────
         "load" | "warm" => {
-            let model = args.get("model").and_then(|v| v.as_str())
+            let model = args
+                .get("model")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: model")?;
             if !is_ollama_running() {
                 return Err("Ollama server is not running.".into());
@@ -311,14 +360,19 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
                 "keep_alive": "10m"
             });
             match ollama_api("POST", "/api/generate", Some(&body)) {
-                Ok(_) => Ok(format!("Model '{}' loaded into memory (keep_alive: 10m).", model)),
+                Ok(_) => Ok(format!(
+                    "Model '{}' loaded into memory (keep_alive: 10m).",
+                    model
+                )),
                 Err(e) => Err(format!("Failed to load model '{}': {}", model, e)),
             }
         }
 
         // ── unload (evict a model from memory) ──────────────────
         "unload" | "evict" => {
-            let model = args.get("model").and_then(|v| v.as_str())
+            let model = args
+                .get("model")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: model")?;
             if !is_ollama_running() {
                 return Err("Ollama server is not running.".into());
@@ -336,9 +390,13 @@ pub fn exec_ollama_manage(args: &Value, _workspace_dir: &Path) -> Result<String,
 
         // ── copy (duplicate a model under a new name) ───────────
         "copy" | "cp" => {
-            let source = args.get("model").and_then(|v| v.as_str())
+            let source = args
+                .get("model")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: model (source name)")?;
-            let destination = args.get("destination").and_then(|v| v.as_str())
+            let destination = args
+                .get("destination")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: destination (new name)")?;
             sh(&format!("ollama cp {} {} 2>&1", source, destination))
         }

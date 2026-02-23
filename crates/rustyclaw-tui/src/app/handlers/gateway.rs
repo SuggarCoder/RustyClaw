@@ -1,19 +1,19 @@
 use crate::action::Action;
 use crate::app::App;
-use rustyclaw_core::config::Config;
-use rustyclaw_core::daemon;
-use crate::dialogs::{FetchModelsLoading, SecretViewerState, SPINNER_FRAMES};
-use rustyclaw_core::gateway::{
-    ClientFrame, ClientFrameType, ClientPayload, ChatMessage, deserialize_frame, serialize_frame,
-    ServerFrame,
-};
+use crate::dialogs::{FetchModelsLoading, SPINNER_FRAMES, SecretViewerState};
 use crate::pages::Page;
 use crate::panes::DisplayMessage;
-use rustyclaw_core::providers;
 use anyhow::Result;
 use futures_util::stream::SplitSink;
-use futures_util::{SinkExt, StreamExt};
 use futures_util::stream::SplitStream;
+use futures_util::{SinkExt, StreamExt};
+use rustyclaw_core::config::Config;
+use rustyclaw_core::daemon;
+use rustyclaw_core::gateway::{
+    ChatMessage, ClientFrame, ClientFrameType, ClientPayload, ServerFrame, deserialize_frame,
+    serialize_frame,
+};
+use rustyclaw_core::providers;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -81,9 +81,10 @@ impl App {
                     }
                     Err(e) => {
                         self.state.gateway_status = rustyclaw_core::types::GatewayStatus::Error;
-                        self.state
-                            .messages
-                            .push(DisplayMessage::error(format!("Failed to start gateway: {}", e)));
+                        self.state.messages.push(DisplayMessage::error(format!(
+                            "Failed to start gateway: {}",
+                            e
+                        )));
                         return;
                     }
                 }
@@ -102,9 +103,10 @@ impl App {
                 self.ws_sink = Some(sink);
 
                 self.state.gateway_status = rustyclaw_core::types::GatewayStatus::Connected;
-                self.state
-                    .messages
-                    .push(DisplayMessage::success(format!("Connected to gateway {}", url)));
+                self.state.messages.push(DisplayMessage::success(format!(
+                    "Connected to gateway {}",
+                    url
+                )));
 
                 let tx = self.action_tx.clone();
                 self.reader_task = Some(tokio::spawn(async move {
@@ -133,7 +135,8 @@ impl App {
                     // Deserialize binary ServerFrame and dispatch directly
                     match deserialize_frame::<ServerFrame>(&data) {
                         Ok(frame) => {
-                            let frame_action = crate::gateway_client::server_frame_to_action(&frame);
+                            let frame_action =
+                                crate::gateway_client::server_frame_to_action(&frame);
                             if let Some(action) = frame_action.action {
                                 let _ = tx.send(action);
                             }
@@ -169,27 +172,28 @@ impl App {
                     let password = val.get("password").and_then(|p| p.as_str()).unwrap_or("");
                     ClientFrame {
                         frame_type: ClientFrameType::UnlockVault,
-                        payload: ClientPayload::UnlockVault { password: password.into() },
+                        payload: ClientPayload::UnlockVault {
+                            password: password.into(),
+                        },
                     }
                 }
-                Some("reload") => {
-                    ClientFrame {
-                        frame_type: ClientFrameType::Reload,
-                        payload: ClientPayload::Reload,
-                    }
-                }
-                Some("secrets_list") => {
-                    ClientFrame {
-                        frame_type: ClientFrameType::SecretsList,
-                        payload: ClientPayload::SecretsList,
-                    }
-                }
+                Some("reload") => ClientFrame {
+                    frame_type: ClientFrameType::Reload,
+                    payload: ClientPayload::Reload,
+                },
+                Some("secrets_list") => ClientFrame {
+                    frame_type: ClientFrameType::SecretsList,
+                    payload: ClientPayload::SecretsList,
+                },
                 Some("secrets_store") => {
                     let key = val.get("key").and_then(|k| k.as_str()).unwrap_or("");
                     let value = val.get("value").and_then(|v| v.as_str()).unwrap_or("");
                     ClientFrame {
                         frame_type: ClientFrameType::SecretsStore,
-                        payload: ClientPayload::SecretsStore { key: key.into(), value: value.into() },
+                        payload: ClientPayload::SecretsStore {
+                            key: key.into(),
+                            value: value.into(),
+                        },
                     }
                 }
                 Some("secrets_get") => {
@@ -206,31 +210,29 @@ impl App {
                         payload: ClientPayload::SecretsDelete { key: key.into() },
                     }
                 }
-                Some("secrets_setup_totp") => {
-                    ClientFrame {
-                        frame_type: ClientFrameType::SecretsSetupTotp,
-                        payload: ClientPayload::SecretsSetupTotp,
-                    }
-                }
-                Some("cancel") => {
-                    ClientFrame {
-                        frame_type: ClientFrameType::Cancel,
-                        payload: ClientPayload::Empty,
-                    }
-                }
+                Some("secrets_setup_totp") => ClientFrame {
+                    frame_type: ClientFrameType::SecretsSetupTotp,
+                    payload: ClientPayload::SecretsSetupTotp,
+                },
+                Some("cancel") => ClientFrame {
+                    frame_type: ClientFrameType::Cancel,
+                    payload: ClientPayload::Empty,
+                },
                 // Fallback: treat as chat if unknown type
-                _ => {
-                    ClientFrame {
-                        frame_type: ClientFrameType::Chat,
-                        payload: ClientPayload::Chat { messages: vec![ChatMessage::text("user", &text)] },
-                    }
-                }
+                _ => ClientFrame {
+                    frame_type: ClientFrameType::Chat,
+                    payload: ClientPayload::Chat {
+                        messages: vec![ChatMessage::text("user", &text)],
+                    },
+                },
             }
         } else {
             // Not JSON: treat as chat
             ClientFrame {
                 frame_type: ClientFrameType::Chat,
-                payload: ClientPayload::Chat { messages: vec![ChatMessage::text("user", &text)] },
+                payload: ClientPayload::Chat {
+                    messages: vec![ChatMessage::text("user", &text)],
+                },
             }
         };
         self.send_frame(frame).await;
@@ -240,12 +242,11 @@ impl App {
     pub async fn send_frame(&mut self, frame: ClientFrame) {
         if let Some(ref mut sink) = self.ws_sink {
             let bytes = match serialize_frame(&frame) {
-                Ok(b) => {
-                    b
-                }
+                Ok(b) => b,
                 Err(err) => {
                     self.state.messages.push(DisplayMessage::error(format!(
-                        "Failed to serialize frame: {}", err
+                        "Failed to serialize frame: {}",
+                        err
                     )));
                     return;
                 }
@@ -265,9 +266,9 @@ impl App {
                 }
             }
         } else {
-            self.state
-                .messages
-                .push(DisplayMessage::warning("Cannot send: gateway not connected."));
+            self.state.messages.push(DisplayMessage::warning(
+                "Cannot send: gateway not connected.",
+            ));
         }
     }
 
@@ -351,10 +352,7 @@ impl App {
         if !self.state.config.secrets_password_protected {
             return None;
         }
-        self.state
-            .secrets_manager
-            .password()
-            .map(|s| s.to_string())
+        self.state.secrets_manager.password().map(|s| s.to_string())
     }
 
     pub fn gateway_defaults(config: &Config) -> (u16, &'static str) {
@@ -373,9 +371,10 @@ impl App {
         let def = match providers::provider_by_id(&provider) {
             Some(d) => d,
             None => {
-                self.state
-                    .messages
-                    .push(DisplayMessage::error(format!("Unknown provider: {}", provider)));
+                self.state.messages.push(DisplayMessage::error(format!(
+                    "Unknown provider: {}",
+                    provider
+                )));
                 return;
             }
         };
@@ -532,25 +531,29 @@ impl App {
     }
 
     pub fn handle_set_provider(&mut self, provider: String) -> Result<Option<Action>> {
-        let model_cfg = self.state.config.model.get_or_insert_with(|| {
-            rustyclaw_core::config::ModelProvider {
-                provider: String::new(),
-                model: None,
-                base_url: None,
-            }
-        });
+        let model_cfg =
+            self.state
+                .config
+                .model
+                .get_or_insert_with(|| rustyclaw_core::config::ModelProvider {
+                    provider: String::new(),
+                    model: None,
+                    base_url: None,
+                });
         model_cfg.provider = provider.clone();
         if let Some(url) = providers::base_url_for_provider(&provider) {
             model_cfg.base_url = Some(url.to_string());
         }
         if let Err(e) = self.state.config.save(None) {
-            self.state
-                .messages
-                .push(DisplayMessage::error(format!("Failed to save config: {}", e)));
+            self.state.messages.push(DisplayMessage::error(format!(
+                "Failed to save config: {}",
+                e
+            )));
         } else {
-            self.state
-                .messages
-                .push(DisplayMessage::success(format!("Provider set to {}.", provider)));
+            self.state.messages.push(DisplayMessage::success(format!(
+                "Provider set to {}.",
+                provider
+            )));
         }
         let def = providers::provider_by_id(&provider);
         let auth_method = def
@@ -560,9 +563,10 @@ impl App {
         match auth_method {
             providers::AuthMethod::DeviceFlow => {
                 if let Some(secret_key) = providers::secret_key_for_provider(&provider) {
-                    let has_key = self.cached_secrets.iter().any(|e| {
-                        e.get("name").and_then(|n| n.as_str()) == Some(secret_key)
-                    });
+                    let has_key = self
+                        .cached_secrets
+                        .iter()
+                        .any(|e| e.get("name").and_then(|n| n.as_str()) == Some(secret_key));
                     if has_key {
                         self.state.messages.push(DisplayMessage::success(format!(
                             "Access token for {} is already stored.",
@@ -576,9 +580,10 @@ impl App {
             }
             providers::AuthMethod::ApiKey => {
                 if let Some(secret_key) = providers::secret_key_for_provider(&provider) {
-                    let has_key = self.cached_secrets.iter().any(|e| {
-                        e.get("name").and_then(|n| n.as_str()) == Some(secret_key)
-                    });
+                    let has_key = self
+                        .cached_secrets
+                        .iter()
+                        .any(|e| e.get("name").and_then(|n| n.as_str()) == Some(secret_key));
                     if has_key {
                         self.state.messages.push(DisplayMessage::success(format!(
                             "API key for {} is already stored.",
@@ -600,7 +605,6 @@ impl App {
         }
         Ok(None)
     }
-
 }
 
 /// Collapse a potentially long block of model "thinking" text into a
@@ -646,9 +650,7 @@ fn collapse_thinking_text(text: &str) -> String {
     }
 }
 
-
 impl App {
-
     pub async fn handle_action(&mut self, action: Action) -> Result<Option<Action>> {
         match action {
             Action::Info(msg) => {
@@ -681,7 +683,11 @@ impl App {
                 self.state.loading_line = None;
             }
             Action::GatewayChunk(delta) => {
-                debug!(delta_len = delta.len(), delta_preview = &delta[..delta.len().min(50)], "Received chunk");
+                debug!(
+                    delta_len = delta.len(),
+                    delta_preview = &delta[..delta.len().min(50)],
+                    "Received chunk"
+                );
 
                 if self.streaming_response.is_none() {
                     debug!("First chunk - initializing streaming response");
@@ -713,7 +719,11 @@ impl App {
                 self.state.streaming_started = None;
 
                 if let Some(buf) = self.streaming_response.take() {
-                    debug!(buf_len = buf.len(), showing_hatching = self.showing_hatching, "Response done");
+                    debug!(
+                        buf_len = buf.len(),
+                        showing_hatching = self.showing_hatching,
+                        "Response done"
+                    );
 
                     if self.showing_hatching {
                         if !buf.is_empty() {
@@ -726,7 +736,11 @@ impl App {
                     }
 
                     let trimmed = buf.trim_end().to_string();
-                    debug!(trimmed_len = trimmed.len(), messages_count = self.state.messages.len(), "Response done");
+                    debug!(
+                        trimmed_len = trimmed.len(),
+                        messages_count = self.state.messages.len(),
+                        "Response done"
+                    );
 
                     if let Some(last) = self.state.messages.last_mut() {
                         debug!(role = ?last.role, "Response done - last message role");
@@ -737,17 +751,23 @@ impl App {
                     }
 
                     if !trimmed.is_empty() {
-                        self.state.conversation_history.push(ChatMessage::text("assistant", &trimmed));
+                        self.state
+                            .conversation_history
+                            .push(ChatMessage::text("assistant", &trimmed));
                         self.save_history();
                     }
                 } else {
                     // This is normal when the model's final round had no text output
                     // (e.g., the streaming buffer was collapsed into a thinking summary
                     // before the tool call, and the model finished without further text).
-                    debug!("Response done: no streaming_response buffer (collapsed to thinking or empty)");
+                    debug!(
+                        "Response done: no streaming_response buffer (collapsed to thinking or empty)"
+                    );
                 }
             }
-            Action::GatewayToolCall { name, arguments, .. } => {
+            Action::GatewayToolCall {
+                name, arguments, ..
+            } => {
                 // If there's accumulated streaming text from the current round,
                 // collapse it into a compact "thinking" summary so it doesn't
                 // create an ever-growing wall of repeated text.
@@ -775,16 +795,24 @@ impl App {
                     } else {
                         args_str
                     };
-                    self.state.messages.push(DisplayMessage::tool_call(format!("{name}({display_args})")));
+                    self.state
+                        .messages
+                        .push(DisplayMessage::tool_call(format!("{name}({display_args})")));
                 }
             }
-            Action::GatewayToolResult { name, result, is_error, .. } => {
+            Action::GatewayToolResult {
+                name,
+                result,
+                is_error,
+                ..
+            } => {
                 let prefix = if is_error { "⚠ " } else { "" };
                 // Pretty display for ask_user results; compact for everything else.
                 let display_result = if name == "ask_user" {
                     format_ask_user_result(&result, is_error)
                 } else if result.len() > 500 {
-                    let truncated = &result[..result.char_indices()
+                    let truncated = &result[..result
+                        .char_indices()
                         .take_while(|(i, _)| *i < 500)
                         .last()
                         .map(|(i, c)| i + c.len_utf8())
@@ -793,20 +821,30 @@ impl App {
                 } else {
                     format!("{prefix}{result}")
                 };
-                self.state.messages.push(DisplayMessage::tool_result(format!("{name}: {display_result}")));
+                self.state
+                    .messages
+                    .push(DisplayMessage::tool_result(format!(
+                        "{name}: {display_result}"
+                    )));
             }
             Action::GatewayAuthenticated => {
-                self.state.messages.push(DisplayMessage::success("Authenticated with gateway."));
+                self.state
+                    .messages
+                    .push(DisplayMessage::success("Authenticated with gateway."));
                 self.state.gateway_status = rustyclaw_core::types::GatewayStatus::Connected;
                 self.request_secrets_list().await;
             }
             Action::GatewayVaultUnlocked => {
-                self.state.messages.push(DisplayMessage::success("Gateway vault unlocked."));
+                self.state
+                    .messages
+                    .push(DisplayMessage::success("Gateway vault unlocked."));
                 self.state.gateway_status = rustyclaw_core::types::GatewayStatus::Connected;
             }
             Action::GatewayAuthChallenge => {
                 self.state.gateway_status = rustyclaw_core::types::GatewayStatus::AuthRequired;
-                self.state.messages.push(DisplayMessage::warning("Gateway requires 2FA authentication."));
+                self.state.messages.push(DisplayMessage::warning(
+                    "Gateway requires 2FA authentication.",
+                ));
                 return Ok(Some(Action::GatewayAuthChallenge));
             }
             Action::GatewayVaultLocked => {
@@ -840,7 +878,12 @@ impl App {
                 }
                 self.request_secrets_list().await;
             }
-            Action::SecretsPeekResult { ok, fields, message, .. } => {
+            Action::SecretsPeekResult {
+                ok,
+                fields,
+                message,
+                ..
+            } => {
                 if ok {
                     self.secret_viewer = Some(SecretViewerState {
                         name: String::new(),
@@ -857,7 +900,9 @@ impl App {
             }
             Action::SecretsSetPolicyResult { ok, message } => {
                 if ok {
-                    self.state.messages.push(DisplayMessage::success("Policy updated."));
+                    self.state
+                        .messages
+                        .push(DisplayMessage::success("Policy updated."));
                 } else {
                     let msg = message.unwrap_or_else(|| "Failed to set policy.".into());
                     self.state.messages.push(DisplayMessage::error(&msg));
@@ -865,11 +910,15 @@ impl App {
                 self.request_secrets_list().await;
             }
             Action::SecretsSetDisabledResult { .. } => {
-                self.state.messages.push(DisplayMessage::success("Credential updated."));
+                self.state
+                    .messages
+                    .push(DisplayMessage::success("Credential updated."));
                 self.request_secrets_list().await;
             }
             Action::SecretsDeleteCredentialResult { .. } => {
-                self.state.messages.push(DisplayMessage::success("Credential deleted."));
+                self.state
+                    .messages
+                    .push(DisplayMessage::success("Credential deleted."));
                 self.request_secrets_list().await;
             }
             Action::SecretsHasTotpResult { .. } => {}
@@ -890,13 +939,16 @@ impl App {
                 if ok {
                     self.state.config.totp_enabled = true;
                     let _ = self.state.config.save(None);
-                    self.state.messages.push(DisplayMessage::success("2FA configured successfully."));
+                    self.state
+                        .messages
+                        .push(DisplayMessage::success("2FA configured successfully."));
                     self.totp_dialog = Some(crate::dialogs::TotpDialogState {
                         phase: crate::dialogs::TotpDialogPhase::Verified,
                     });
                 } else {
                     if let Some(ref mut dlg) = self.totp_dialog {
-                        if let crate::dialogs::TotpDialogPhase::ShowUri { ref uri, .. } = dlg.phase {
+                        if let crate::dialogs::TotpDialogPhase::ShowUri { ref uri, .. } = dlg.phase
+                        {
                             let saved_uri = uri.clone();
                             dlg.phase = crate::dialogs::TotpDialogPhase::Failed {
                                 uri: saved_uri,
@@ -910,9 +962,13 @@ impl App {
                 if ok {
                     self.state.config.totp_enabled = false;
                     let _ = self.state.config.save(None);
-                    self.state.messages.push(DisplayMessage::info("2FA has been removed."));
+                    self.state
+                        .messages
+                        .push(DisplayMessage::info("2FA has been removed."));
                 } else {
-                    self.state.messages.push(DisplayMessage::error("Failed to remove 2FA"));
+                    self.state
+                        .messages
+                        .push(DisplayMessage::error("Failed to remove 2FA"));
                 }
             }
             _ => {}
@@ -953,9 +1009,7 @@ fn format_ask_user_call(arguments: &serde_json::Value) -> String {
                         .as_str()
                         .or_else(|| opt.get("label").and_then(|v| v.as_str()))
                         .unwrap_or("?");
-                    let desc = opt
-                        .get("description")
-                        .and_then(|v| v.as_str());
+                    let desc = opt.get("description").and_then(|v| v.as_str());
                     if let Some(d) = desc {
                         out.push_str(&format!("\n    {}. {} — {}", i + 1, label, d));
                     } else {
@@ -976,14 +1030,8 @@ fn format_ask_user_call(arguments: &serde_json::Value) -> String {
             out.push_str("\n  [Form]");
             if let Some(fields) = arguments.get("fields").and_then(|v| v.as_array()) {
                 for f in fields {
-                    let label = f
-                        .get("label")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("?");
-                    let req = f
-                        .get("required")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
+                    let label = f.get("label").and_then(|v| v.as_str()).unwrap_or("?");
+                    let req = f.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
                     if req {
                         out.push_str(&format!("\n    • {} *", label));
                     } else {
