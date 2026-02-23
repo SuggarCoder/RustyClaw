@@ -28,9 +28,11 @@ jobs:
         # 按照项目文档执行全空间优化构建
         run: cargo build --release --workspace
 
-      - name: Upload Binary
+      - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
           name: RustyClaw-Debian-Binary
           # 编译产物通常在 target/release 下
-          path: target/release/rustyclaw
+          path: |
+            target/release/rustyclaw
+            target/release/rustyclaw-gateway
