@@ -1,0 +1,36 @@
+name: Build RustyClaw Binary
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        # 对应你提供的 Prerequisites 中的 Debian 指令
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential pkg-config
+
+      - name: Install Rust 1.85+
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable # 2026年2月稳定版已远超 1.85
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build Workspace (Release)
+        # 按照项目文档执行全空间优化构建
+        run: cargo build --release --workspace
+
+      - name: Upload Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: RustyClaw-Debian-Binary
+          # 编译产物通常在 target/release 下
+          path: target/release/rustyclaw
