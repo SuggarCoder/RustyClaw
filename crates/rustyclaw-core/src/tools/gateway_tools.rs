@@ -199,6 +199,7 @@ pub fn exec_message(args: &Value, _workspace_dir: &Path) -> Result<String, Strin
             match channel {
                 "discord" => send_discord(target, message),
                 "telegram" => send_telegram(target, message),
+                "slack" => send_slack(target, message),
                 "webhook" => {
                     let webhook_url = args
                         .get("webhookUrl")
@@ -217,9 +218,11 @@ pub fn exec_message(args: &Value, _workspace_dir: &Path) -> Result<String, Strin
                         send_discord(target, message)
                     } else if std::env::var("TELEGRAM_BOT_TOKEN").is_ok() {
                         send_telegram(target, message)
+                    } else if std::env::var("SLACK_BOT_TOKEN").is_ok() {
+                        send_slack(target, message)
                     } else {
                         Ok(format!(
-                            "Message queued for delivery:\n- Channel: {}\n- Target: {}\n- Message: {} chars\n\nNote: Set DISCORD_BOT_TOKEN or TELEGRAM_BOT_TOKEN to enable actual delivery.",
+                            "Message queued for delivery:\n- Channel: {}\n- Target: {}\n- Message: {} chars\n\nNote: Set DISCORD_BOT_TOKEN, TELEGRAM_BOT_TOKEN, or SLACK_BOT_TOKEN to enable actual delivery.",
                             channel,
                             target,
                             message.len()
@@ -255,6 +258,7 @@ pub fn exec_message(args: &Value, _workspace_dir: &Path) -> Result<String, Strin
                 let result = match channel {
                     "discord" => send_discord(target, message),
                     "telegram" => send_telegram(target, message),
+                    "slack" => send_slack(target, message),
                     _ => Ok(format!("Would send to {}", target)),
                 };
                 results.push(format!("{}: {}", target, result.unwrap_or_else(|e| e)));
@@ -328,6 +332,43 @@ fn send_telegram(chat_id: &str, content: &str) -> Result<String, String> {
         let status = response.status();
         let error = response.text().unwrap_or_default();
         Err(format!("Telegram API error ({}): {}", status, error))
+    }
+}
+
+/// Send a message via Slack bot API.
+fn send_slack(channel_id: &str, content: &str) -> Result<String, String> {
+    let token = std::env::var("SLACK_BOT_TOKEN")
+        .map_err(|_| "SLACK_BOT_TOKEN not set")?;
+
+    let client = reqwest::blocking::Client::new();
+    let url = "https://slack.com/api/chat.postMessage";
+
+    let response = client
+        .post(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "channel": channel_id,
+            "text": content
+        }))
+        .send()
+        .map_err(|e| format!("Slack API request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error = response.text().unwrap_or_default();
+        return Err(format!("Slack API error ({}): {}", status, error));
+    }
+
+    let data: Value = response.json().unwrap_or_default();
+    if data["ok"].as_bool() == Some(true) {
+        let ts = data["ts"].as_str().unwrap_or("unknown");
+        Ok(format!("Message sent to Slack channel {}. TS: {}", channel_id, ts))
+    } else {
+        Err(format!(
+            "Slack API error: {}",
+            data["error"].as_str().unwrap_or("unknown")
+        ))
     }
 }
 

@@ -7,7 +7,7 @@
 use crate::config::{Config, MessengerConfig};
 use crate::messengers::{
     DiscordMessenger, MediaAttachment, Message, Messenger, MessengerManager, SendOptions,
-    TelegramMessenger, WebhookMessenger,
+    SlackMessenger, TelegramMessenger, WebhookMessenger,
 };
 use crate::tools;
 use anyhow::{Context, Result};
@@ -104,6 +104,33 @@ async fn create_messenger(config: &MessengerConfig) -> Result<Box<dyn Messenger>
                 .context("Discord requires 'token' or DISCORD_BOT_TOKEN env var")?;
             Box::new(DiscordMessenger::new(name, token))
         }
+        "slack" => {
+            let token = config
+                .token
+                .clone()
+                .or_else(|| std::env::var("SLACK_BOT_TOKEN").ok())
+                .context("Slack requires 'token' or SLACK_BOT_TOKEN env var")?;
+
+            let channels = if config.allowed_chats.is_empty() {
+                std::env::var("SLACK_CHANNEL_IDS")
+                    .ok()
+                    .map(|raw| parse_csv_list(&raw))
+                    .unwrap_or_default()
+            } else {
+                config.allowed_chats.clone()
+            };
+
+            let allowed_users = if config.allowed_users.is_empty() {
+                std::env::var("SLACK_ALLOWED_USERS")
+                    .ok()
+                    .map(|raw| parse_csv_list(&raw))
+                    .unwrap_or_default()
+            } else {
+                config.allowed_users.clone()
+            };
+
+            Box::new(SlackMessenger::new(name, token, channels, allowed_users))
+        }
         "webhook" => {
             let url = config
                 .webhook_url
@@ -154,6 +181,14 @@ async fn create_messenger(config: &MessengerConfig) -> Result<Box<dyn Messenger>
 
     messenger.initialize().await?;
     Ok(messenger)
+}
+
+fn parse_csv_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 /// Run the messenger polling loop.
@@ -268,6 +303,15 @@ async fn process_incoming_message(
     messenger_type: &str,
     msg: Message,
 ) -> Result<()> {
+    if !is_allowed_message(config, messenger_type, &msg) {
+        debug!(
+            sender = %msg.sender,
+            messenger_type = %messenger_type,
+            "Skipping message not in allow-list"
+        );
+        return Ok(());
+    }
+
     debug!(
         sender = %msg.sender,
         messenger_type = %messenger_type,
@@ -475,6 +519,31 @@ async fn process_incoming_message(
     }
 
     Ok(())
+}
+
+fn is_allowed_message(config: &Config, messenger_type: &str, msg: &Message) -> bool {
+    let Some(messenger_cfg) = config
+        .messengers
+        .iter()
+        .find(|m| m.enabled && m.messenger_type == messenger_type)
+    else {
+        return true;
+    };
+
+    if !messenger_cfg.allowed_users.is_empty()
+        && !messenger_cfg.allowed_users.iter().any(|u| u == &msg.sender)
+    {
+        return false;
+    }
+
+    if !messenger_cfg.allowed_chats.is_empty() {
+        let route = msg.channel.as_deref().unwrap_or(&msg.sender);
+        if !messenger_cfg.allowed_chats.iter().any(|c| c == route) {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Build system prompt with messenger context and workspace files.

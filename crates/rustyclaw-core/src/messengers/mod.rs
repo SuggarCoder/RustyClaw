@@ -141,15 +141,17 @@ impl Default for MessengerManager {
 
 // ── Built-in messengers ─────────────────────────────────────────────────────
 
-mod webhook;
 mod console;
 mod discord;
+mod slack;
 mod telegram;
+mod webhook;
 
-pub use webhook::WebhookMessenger;
 pub use console::ConsoleMessenger;
 pub use discord::DiscordMessenger;
+pub use slack::SlackMessenger;
 pub use telegram::TelegramMessenger;
+pub use webhook::WebhookMessenger;
 
 // ── Optional messengers (feature-gated) ─────────────────────────────────────
 

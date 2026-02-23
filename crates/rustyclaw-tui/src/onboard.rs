@@ -479,7 +479,6 @@ pub fn run_onboard_wizard(
         id: &'static str,
         display: &'static str,
         secret_label: &'static str,
-        secret_key: &'static str,
     }
 
     const MESSENGERS: &[MessengerDef] = &[
@@ -487,19 +486,16 @@ pub fn run_onboard_wizard(
             id: "slack",
             display: "Slack",
             secret_label: "Bot token (xoxb-…)",
-            secret_key: "slack_bot_token",
         },
         MessengerDef {
             id: "discord",
             display: "Discord",
             secret_label: "Bot token",
-            secret_key: "discord_bot_token",
         },
         MessengerDef {
             id: "telegram",
             display: "Telegram",
             secret_label: "Bot token (from @BotFather)",
-            secret_key: "telegram_bot_token",
         },
     ];
 
@@ -541,15 +537,43 @@ pub fn run_onboard_wizard(
                         "No token entered — skipping {}.", def.display,
                     )));
                 } else {
-                    secrets.store_secret(def.secret_key, &token)?;
-                    println!("  {}", t::icon_ok(&format!(
-                        "{} token stored securely.", def.display,
-                    )));
+                    let chats_input = prompt_line(
+                        &mut reader,
+                        &format!("{} ", t::accent("Allowed chat/channel IDs (comma-separated, blank = no filter):")),
+                    )?;
+                    let allowed_chats = parse_csv_list(&chats_input);
+
+                    let users_input = prompt_line(
+                        &mut reader,
+                        &format!("{} ", t::accent("Allowed user IDs (comma-separated, blank = no filter):")),
+                    )?;
+                    let allowed_users = parse_csv_list(&users_input);
+
+                    if def.id == "slack" && allowed_chats.is_empty() {
+                        println!(
+                            "  {}",
+                            t::icon_warn(
+                                "Slack has no channel IDs configured; inbound polling may return no messages.",
+                            )
+                        );
+                        println!(
+                            "  {}",
+                            t::muted("Tip: set channel IDs now, or provide SLACK_CHANNEL_IDS at runtime.")
+                        );
+                    }
+
+                    println!(
+                        "  {}",
+                        t::icon_ok(&format!("{} token saved in config.messengers.", def.display,))
+                    );
 
                     configured_messengers.push(MessengerConfig {
                         name: def.id.to_string(),
                         messenger_type: def.id.to_string(),
                         enabled: true,
+                        token: Some(token),
+                        allowed_chats,
+                        allowed_users,
                         ..Default::default()
                     });
                 }
@@ -765,6 +789,14 @@ fn prompt_line(reader: &mut impl BufRead, prompt: &str) -> Result<String> {
     let mut buf = String::new();
     reader.read_line(&mut buf)?;
     Ok(buf.trim_end_matches('\n').trim_end_matches('\r').to_string())
+}
+
+fn parse_csv_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 /// Best-effort username for TOTP account labels.

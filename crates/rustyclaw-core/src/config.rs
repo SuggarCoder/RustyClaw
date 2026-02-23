@@ -113,7 +113,7 @@ pub struct MessengerConfig {
     /// Display name for this messenger instance.
     #[serde(default)]
     pub name: String,
-    /// Messenger type: telegram, discord, signal, matrix, webhook.
+    /// Messenger type: telegram, discord, slack, signal, matrix, webhook.
     #[serde(default)]
     pub messenger_type: String,
     /// Whether this messenger is enabled.

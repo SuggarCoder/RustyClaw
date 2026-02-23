@@ -24,10 +24,16 @@ use_secrets = true
 # Messenger configurations
 # [[messengers]]
 # name = "slack"
+# messenger_type = "slack"
 # enabled = false
-# config_path = "/home/user/.rustyclaw/messengers/slack.toml"
+# token = "xoxb-your-slack-bot-token"
+# allowed_chats = ["C0123456789"] # Slack channel IDs to poll
+# allowed_users = []              # Optional Slack user ID allow-list
 
 # [[messengers]]
 # name = "discord"
+# messenger_type = "discord"
 # enabled = false
-# config_path = "/home/user/.rustyclaw/messengers/discord.toml"
+# token = "discord-bot-token"
+# allowed_chats = []
+# allowed_users = []
