@@ -323,6 +323,32 @@ Connect agents to the platforms where work happens:
 - **WhatsApp** (QR code pairing)
 - **HTTP webhooks** (custom integrations)
 
+#### Messenger Pipeline (Polling + Queue + Workers)
+
+Inbound messenger handling uses:
+
+- a single polling loop
+- a bounded `mpsc` queue
+- a finite worker pool for processing
+
+This design prevents poller stalls under load, preserves in-order handling per conversation (`messenger_type:chat_id`), and applies bounded backpressure (enqueue timeout + retry + drop with warning).
+
+Configure in `~/.rustyclaw/config.toml`:
+
+```toml
+# Poll cadence (minimum clamp: 500ms)
+messenger_poll_interval_ms = 2000
+
+# Worker pool size
+messenger_worker_count = 4
+
+# Inbound queue capacity
+messenger_queue_capacity = 256
+
+# Per-attempt enqueue timeout before retry/drop
+messenger_enqueue_timeout_ms = 200
+```
+
 ### 🧠 Memory & Context
 
 Two-layer memory system for long-running agents:

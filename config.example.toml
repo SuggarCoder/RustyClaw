@@ -37,3 +37,9 @@ use_secrets = true
 # token = "discord-bot-token"
 # allowed_chats = []
 # allowed_users = []
+
+# Messenger pipeline tuning:
+# messenger_poll_interval_ms = 2000     # Poll cadence, clamped to >= 500ms
+# messenger_worker_count = 4            # Concurrent workers
+# messenger_queue_capacity = 256        # Bounded inbound queue size
+# messenger_enqueue_timeout_ms = 200    # Per-attempt enqueue timeout (2 attempts)

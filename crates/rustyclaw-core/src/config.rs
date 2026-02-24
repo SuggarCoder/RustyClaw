@@ -90,6 +90,15 @@ pub struct Config {
     /// Messenger polling interval in milliseconds (default: 2000).
     #[serde(default)]
     pub messenger_poll_interval_ms: Option<u32>,
+    /// Number of concurrent messenger workers (default: 4).
+    #[serde(default)]
+    pub messenger_worker_count: Option<usize>,
+    /// Capacity of messenger inbound queue (default: 256).
+    #[serde(default)]
+    pub messenger_queue_capacity: Option<usize>,
+    /// Max enqueue wait time in milliseconds before retry/drop (default: 200).
+    #[serde(default)]
+    pub messenger_enqueue_timeout_ms: Option<u64>,
     /// Per-tool permission overrides. Tools not listed here default to Allow.
     #[serde(default)]
     pub tool_permissions: HashMap<String, crate::tools::ToolPermission>,
@@ -179,6 +188,9 @@ impl Default for Config {
             clawhub_token: None,
             system_prompt: None,
             messenger_poll_interval_ms: None,
+            messenger_worker_count: None,
+            messenger_queue_capacity: None,
+            messenger_enqueue_timeout_ms: None,
             tool_permissions: HashMap::new(),
             tls_cert: None,
             tls_key: None,

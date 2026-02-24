@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
@@ -40,6 +40,12 @@ pub type SharedMessengerManager = Arc<Mutex<MessengerManager>>;
 /// Key: "messenger_type:chat_id" or "messenger_type:sender_id"
 type ConversationStore = Arc<Mutex<HashMap<String, Vec<ChatMessage>>>>;
 
+/// Session-level locks to preserve in-order handling per conversation.
+type SessionLocks = Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+/// Shared receiver for inbound messenger queue.
+type SharedIncomingRx = Arc<Mutex<mpsc::Receiver<QueuedIncomingMessage>>>;
+
 /// Maximum messages to keep in conversation history per chat.
 const MAX_HISTORY_MESSAGES: usize = 50;
 
@@ -51,6 +57,24 @@ const MAX_IMAGE_SIZE: usize = 10 * 1024 * 1024;
 
 /// Supported image MIME types for vision models.
 const SUPPORTED_IMAGE_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+/// Default worker count for messenger processing.
+const DEFAULT_MESSENGER_WORKER_COUNT: usize = 4;
+
+/// Default queue capacity for messenger inbound messages.
+const DEFAULT_MESSENGER_QUEUE_CAPACITY: usize = 256;
+
+/// Default enqueue timeout before retry/drop.
+const DEFAULT_MESSENGER_ENQUEUE_TIMEOUT_MS: u64 = 200;
+
+/// Number of enqueue attempts for backpressure handling.
+const ENQUEUE_RETRY_ATTEMPTS: usize = 2;
+
+#[derive(Debug, Clone)]
+struct QueuedIncomingMessage {
+    messenger_type: String,
+    msg: Message,
+}
 
 /// Create a messenger manager from config.
 pub async fn create_messenger_manager(config: &Config) -> Result<MessengerManager> {
@@ -222,14 +246,52 @@ pub async fn run_messenger_loop(
 
     let poll_interval =
         Duration::from_millis(config.messenger_poll_interval_ms.unwrap_or(2000).max(500) as u64);
+    let worker_count = config
+        .messenger_worker_count
+        .unwrap_or(DEFAULT_MESSENGER_WORKER_COUNT)
+        .max(1);
+    let queue_capacity = config
+        .messenger_queue_capacity
+        .unwrap_or(DEFAULT_MESSENGER_QUEUE_CAPACITY)
+        .max(1);
+    let enqueue_timeout = Duration::from_millis(
+        config
+            .messenger_enqueue_timeout_ms
+            .unwrap_or(DEFAULT_MESSENGER_ENQUEUE_TIMEOUT_MS)
+            .max(10),
+    );
 
     // Per-chat conversation history
     let conversations: ConversationStore = Arc::new(Mutex::new(HashMap::new()));
+    let session_locks: SessionLocks = Arc::new(Mutex::new(HashMap::new()));
 
     let http = reqwest::Client::new();
+    let (inbound_tx, inbound_rx) = mpsc::channel(queue_capacity);
+    let shared_rx: SharedIncomingRx = Arc::new(Mutex::new(inbound_rx));
+    let config = Arc::new(config);
+
+    let mut worker_handles = Vec::with_capacity(worker_count);
+    for worker_id in 0..worker_count {
+        worker_handles.push(tokio::spawn(run_worker_loop(
+            worker_id,
+            http.clone(),
+            config.clone(),
+            messenger_mgr.clone(),
+            model_ctx.clone(),
+            vault.clone(),
+            skill_mgr.clone(),
+            conversations.clone(),
+            session_locks.clone(),
+            shared_rx.clone(),
+            cancel.child_token(),
+        )));
+    }
 
     info!(
         poll_interval_ms = poll_interval.as_millis(),
+        worker_count,
+        queue_capacity,
+        enqueue_timeout_ms = enqueue_timeout.as_millis(),
         "Starting messenger loop"
     );
 
@@ -246,29 +308,153 @@ pub async fn run_messenger_loop(
                     poll_all_messengers(&mgr).await
                 };
 
-                // Process each message
+                // Queue each message for worker processing
+                let mut queue_closed = false;
                 for (messenger_type, msg) in messages {
-                    if let Err(e) = process_incoming_message(
-                        &http,
-                        &config,
-                        &messenger_mgr,
-                        &model_ctx,
-                        &vault,
-                        &skill_mgr,
-                        &conversations,
-                        &messenger_type,
-                        msg,
-                    )
-                    .await
-                    {
-                        error!(error = %e, "Error processing message");
+                    let queued = QueuedIncomingMessage { messenger_type, msg };
+                    match enqueue_incoming_with_retry(&inbound_tx, queued, enqueue_timeout).await {
+                        EnqueueResult::Queued => {}
+                        EnqueueResult::Dropped => {
+                            warn!(
+                                queue_capacity,
+                                "Dropped incoming message after enqueue retries"
+                            );
+                        }
+                        EnqueueResult::Closed => {
+                            warn!("Inbound queue closed; stopping messenger poller");
+                            queue_closed = true;
+                            break;
+                        }
                     }
+                }
+                if queue_closed {
+                    break;
                 }
             }
         }
     }
 
+    drop(inbound_tx);
+
+    for handle in worker_handles {
+        match handle.await {
+            Ok(()) => {}
+            Err(join_err) => warn!(error = %join_err, "Messenger worker task join error"),
+        }
+    }
+
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum EnqueueResult {
+    Queued,
+    Dropped,
+    Closed,
+}
+
+async fn enqueue_incoming_with_retry(
+    tx: &mpsc::Sender<QueuedIncomingMessage>,
+    item: QueuedIncomingMessage,
+    enqueue_timeout: Duration,
+) -> EnqueueResult {
+    let mut pending = Some(item);
+
+    for attempt in 1..=ENQUEUE_RETRY_ATTEMPTS {
+        let outbound = if attempt < ENQUEUE_RETRY_ATTEMPTS {
+            pending
+                .as_ref()
+                .expect("pending queue item should exist")
+                .clone()
+        } else {
+            pending.take().expect("pending queue item should exist")
+        };
+
+        match tokio::time::timeout(enqueue_timeout, tx.send(outbound)).await {
+            Ok(Ok(())) => return EnqueueResult::Queued,
+            Ok(Err(_)) => return EnqueueResult::Closed,
+            Err(_) if attempt < ENQUEUE_RETRY_ATTEMPTS => {
+                debug!(attempt, "Messenger enqueue timed out; retrying");
+            }
+            Err(_) => return EnqueueResult::Dropped,
+        }
+    }
+
+    EnqueueResult::Dropped
+}
+
+async fn run_worker_loop(
+    worker_id: usize,
+    http: reqwest::Client,
+    config: Arc<Config>,
+    messenger_mgr: SharedMessengerManager,
+    model_ctx: Arc<ModelContext>,
+    vault: SharedVault,
+    skill_mgr: SharedSkillManager,
+    conversations: ConversationStore,
+    session_locks: SessionLocks,
+    queue_rx: SharedIncomingRx,
+    cancel: CancellationToken,
+) {
+    debug!(worker_id, "Messenger worker started");
+
+    loop {
+        let maybe_item = tokio::select! {
+            _ = cancel.cancelled() => None,
+            item = recv_next_incoming(&queue_rx) => item,
+        };
+
+        let Some(item) = maybe_item else {
+            break;
+        };
+
+        let QueuedIncomingMessage {
+            messenger_type,
+            msg,
+        } = item;
+        let session_key = conversation_key(&messenger_type, &msg);
+        let session_lock = get_or_create_session_lock(&session_locks, &session_key).await;
+        let _session_guard = session_lock.lock().await;
+
+        if let Err(e) = process_incoming_message(
+            &http,
+            &config,
+            &messenger_mgr,
+            &model_ctx,
+            &vault,
+            &skill_mgr,
+            &conversations,
+            &messenger_type,
+            msg,
+        )
+        .await
+        {
+            error!(
+                worker_id,
+                error = %e,
+                session_key = %session_key,
+                "Error processing messenger message"
+            );
+        }
+    }
+
+    debug!(worker_id, "Messenger worker stopped");
+}
+
+async fn recv_next_incoming(queue_rx: &SharedIncomingRx) -> Option<QueuedIncomingMessage> {
+    let mut rx = queue_rx.lock().await;
+    rx.recv().await
+}
+
+async fn get_or_create_session_lock(
+    session_locks: &SessionLocks,
+    session_key: &str,
+) -> Arc<Mutex<()>> {
+    let mut locks = session_locks.lock().await;
+    locks
+        .entry(session_key.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
 
 /// Poll all messengers and collect incoming messages.
@@ -293,6 +479,14 @@ async fn poll_all_messengers(mgr: &MessengerManager) -> Vec<(String, Message)> {
     }
 
     all_messages
+}
+
+fn conversation_key(messenger_type: &str, msg: &Message) -> String {
+    format!(
+        "{}:{}",
+        messenger_type,
+        msg.channel.as_deref().unwrap_or(&msg.sender)
+    )
 }
 
 /// Process an incoming message through the model with full tool loop.
@@ -330,11 +524,7 @@ async fn process_incoming_message(
     let workspace_dir = config.workspace_dir();
 
     // Build conversation key for this chat
-    let conv_key = format!(
-        "{}:{}",
-        messenger_type,
-        msg.channel.as_deref().unwrap_or(&msg.sender)
-    );
+    let conv_key = conversation_key(messenger_type, &msg);
 
     // Get or create conversation history
     let mut messages = {
@@ -909,4 +1099,84 @@ fn build_multimodal_user_message(text: &str, images: &[ImageData], provider: &st
         "role": "user",
         "content": content
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_message(sender: &str, channel: Option<&str>) -> Message {
+        Message {
+            id: "msg-1".to_string(),
+            sender: sender.to_string(),
+            content: "hello".to_string(),
+            timestamp: 0,
+            channel: channel.map(ToOwned::to_owned),
+            reply_to: None,
+            media: None,
+        }
+    }
+
+    fn queued_message(sender: &str, channel: Option<&str>) -> QueuedIncomingMessage {
+        QueuedIncomingMessage {
+            messenger_type: "telegram".to_string(),
+            msg: sample_message(sender, channel),
+        }
+    }
+
+    #[test]
+    fn conversation_key_prefers_channel() {
+        let msg = sample_message("alice", Some("room-42"));
+        assert_eq!(conversation_key("telegram", &msg), "telegram:room-42");
+    }
+
+    #[test]
+    fn conversation_key_falls_back_to_sender() {
+        let msg = sample_message("alice", None);
+        assert_eq!(conversation_key("telegram", &msg), "telegram:alice");
+    }
+
+    #[tokio::test]
+    async fn enqueue_returns_queued_when_channel_has_capacity() {
+        let (tx, _rx) = mpsc::channel(4);
+        let outcome = enqueue_incoming_with_retry(
+            &tx,
+            queued_message("alice", Some("room-1")),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert_eq!(outcome, EnqueueResult::Queued);
+    }
+
+    #[tokio::test]
+    async fn enqueue_returns_closed_when_receiver_dropped() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let outcome = enqueue_incoming_with_retry(
+            &tx,
+            queued_message("alice", Some("room-1")),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert_eq!(outcome, EnqueueResult::Closed);
+    }
+
+    #[tokio::test]
+    async fn enqueue_returns_dropped_when_queue_remains_full() {
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.send(queued_message("alice", Some("room-1")))
+            .await
+            .expect("first enqueue should succeed");
+
+        let outcome = enqueue_incoming_with_retry(
+            &tx,
+            queued_message("bob", Some("room-1")),
+            Duration::from_millis(5),
+        )
+        .await;
+        assert_eq!(outcome, EnqueueResult::Dropped);
+
+        // Drain queue to avoid noisy pending tasks in test runtime.
+        let _ = rx.recv().await;
+    }
 }
