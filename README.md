@@ -157,6 +157,43 @@ rustyclaw tui
 rustyclaw gateway start
 ```
 
+### Use `codex-acp` Backend (ChatGPT/Codex Auth)
+
+RustyClaw can route model calls through a local `codex-acp` subprocess over stdio (ACP/JSON-RPC).
+
+1. Install `codex-acp` and make sure it is in `PATH`:
+
+```bash
+git clone https://github.com/cola-io/codex-acp.git
+cd codex-acp
+cargo build --release
+sudo cp target/release/codex-acp /usr/local/bin/
+```
+
+2. Authenticate Codex/ChatGPT account used by `codex-acp`:
+
+```bash
+codex login
+```
+
+3. Enable ACP backend in RustyClaw config:
+
+```bash
+rustyclaw config set use_codex_acp true
+```
+
+4. Start RustyClaw normally:
+
+```bash
+rustyclaw gateway start
+# or
+rustyclaw tui
+```
+
+Notes:
+- You do **not** start `codex-acp` manually. RustyClaw launches it as a child process.
+- Set `use_codex_acp = false` (or `rustyclaw config set use_codex_acp false`) to switch back to direct provider API calls.
+
 ## Building from Source
 
 RustyClaw is organized as a **Cargo workspace** with three crates:

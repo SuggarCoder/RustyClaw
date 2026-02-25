@@ -1675,6 +1675,7 @@ fn config_get(config: &Config, path: &str) -> String {
             .as_ref()
             .and_then(|m| m.model.clone())
             .unwrap_or_else(|| "(not set)".into()),
+        "use_codex_acp" | "acp" => config.use_codex_acp.to_string(),
         "secrets_password_protected" => config.secrets_password_protected.to_string(),
         _ => format!("(unknown config path: {})", path),
     }
@@ -1714,6 +1715,14 @@ fn config_set(config: &mut Config, path: &str, value: &str) -> Result<()> {
                 });
             m.model = Some(value.to_string());
         }
+        "use_codex_acp" | "acp" => {
+            let parsed = match value.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                _ => anyhow::bail!("Invalid bool for use_codex_acp: {}", value),
+            };
+            config.use_codex_acp = parsed;
+        }
         _ => anyhow::bail!("Unknown config path: {}", path),
     }
     Ok(())
@@ -1726,6 +1735,7 @@ fn config_unset(config: &mut Config, path: &str) -> Result<()> {
         "skills_dir" | "skills" => config.skills_dir = None,
         "gateway_url" | "gateway" => config.gateway_url = None,
         "model" | "model.provider" | "model.model" => config.model = None,
+        "use_codex_acp" | "acp" => config.use_codex_acp = false,
         _ => anyhow::bail!("Unknown config path: {}", path),
     }
     Ok(())

@@ -53,6 +53,10 @@ pub struct Config {
     /// Selected model provider and default model
     #[serde(default)]
     pub model: Option<ModelProvider>,
+    /// Whether to route model calls through a local `codex-acp` subprocess
+    /// instead of direct provider HTTP APIs.
+    #[serde(default)]
+    pub use_codex_acp: bool,
     /// Whether the secrets vault is encrypted with a user password
     /// (as opposed to an auto-generated key file).
     #[serde(default)]
@@ -177,6 +181,7 @@ impl Default for Config {
             use_secrets: true,
             gateway_url: None,
             model: None,
+            use_codex_acp: false,
             secrets_password_protected: false,
             totp_enabled: false,
             agent_access: false,

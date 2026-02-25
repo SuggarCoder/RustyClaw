@@ -5,6 +5,7 @@
 //! model providers. It also polls configured messengers (Telegram, Discord, etc.)
 //! for incoming messages and routes them through the model.
 
+mod acp_client;
 mod auth;
 pub mod csrf;
 pub mod health;
@@ -349,6 +350,8 @@ pub async fn run_gateway(
         info!("Messenger polling enabled");
     }
 
+    let acp_client_mgr = Arc::new(acp_client::AcpClientManager::new());
+
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
@@ -364,6 +367,7 @@ pub async fn run_gateway(
                 let limiter_clone = rate_limiter.clone();
                 let child_cancel = cancel.child_token();
                 let tls = tls_acceptor.clone();
+                let acp_clone = acp_client_mgr.clone();
                 tokio::spawn(async move {
                     // Wrap in TLS if configured, otherwise use plain TCP.
                     let boxed_stream: MaybeTlsStream = if let Some(acceptor) = tls {
@@ -381,7 +385,7 @@ pub async fn run_gateway(
                     if let Err(err) = handle_connection(
                         boxed_stream, peer, shared_cfg, shared_ctx,
                         session_clone, vault_clone, skill_clone,
-                        limiter_clone, child_cancel,
+                        limiter_clone, child_cancel, acp_clone,
                     ).await {
                         debug!(peer = %peer, error = %err, "Connection error");
                     }
@@ -403,6 +407,7 @@ async fn handle_connection(
     skill_mgr: SharedSkillManager,
     rate_limiter: auth::RateLimiter,
     cancel: CancellationToken,
+    acp_client_mgr: Arc<acp_client::AcpClientManager>,
 ) -> Result<()> {
     let ws_stream: WebSocketStream<MaybeTlsStream> = tokio_tungstenite::accept_async(stream)
         .await
@@ -1041,6 +1046,7 @@ async fn handle_connection(
                                     &shared_config,
                                     &approval_rx,
                                     &user_prompt_rx,
+                                    &acp_client_mgr,
                                 )
                                 .await
                                 {
@@ -1298,6 +1304,7 @@ async fn dispatch_text_message(
     shared_config: &SharedConfig,
     approval_rx: &Arc<Mutex<tokio::sync::mpsc::Receiver<(String, bool)>>>,
     user_prompt_rx: &Arc<Mutex<tokio::sync::mpsc::Receiver<(String, bool, serde_json::Value)>>>,
+    acp_client_mgr: &Arc<acp_client::AcpClientManager>,
 ) -> Result<()> {
     let mut resolved = match providers::resolve_request(req.clone(), model_ctx) {
         Ok(r) => r,
@@ -1421,7 +1428,14 @@ async fn dispatch_text_message(
             }
         }
 
-        let result = if resolved.provider == "anthropic" {
+        let use_codex_acp = {
+            let cfg = shared_config.read().await;
+            cfg.use_codex_acp
+        };
+
+        let result = if use_codex_acp {
+            acp_client_mgr.prompt_text(&resolved.messages).await
+        } else if resolved.provider == "anthropic" {
             // Anthropic: use streaming mode with writer for real-time chunks
             providers::call_anthropic_with_tools(http, &resolved, Some(writer)).await
         } else if resolved.provider == "google" {

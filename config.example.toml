@@ -13,6 +13,11 @@ settings_dir = "/home/user/.rustyclaw"
 # Whether to use the secrets storage system
 use_secrets = true
 
+# Whether to route LLM calls through a local codex-acp subprocess.
+# false = use the current provider HTTP APIs.
+# true  = use codex-acp over stdio JSON-RPC.
+use_codex_acp = false
+
 # Blank lines between messages in the TUI (0 = compact, 1 = comfortable)
 # message_spacing = 1
 
