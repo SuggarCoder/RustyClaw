@@ -733,7 +733,7 @@ fn is_allowed_message(config: &Config, messenger_type: &str, msg: &Message) -> b
         .iter()
         .find(|m| m.enabled && m.messenger_type == messenger_type)
     else {
-        return true;
+        return false;
     };
 
     if !messenger_cfg.allowed_users.is_empty()
@@ -1134,6 +1134,36 @@ mod tests {
     fn conversation_key_falls_back_to_sender() {
         let msg = sample_message("alice", None);
         assert_eq!(conversation_key("telegram", &msg), "telegram:alice");
+    }
+
+    #[test]
+    fn is_allowed_message_fails_closed_for_unknown_messenger_type() {
+        let config = Config {
+            messengers: vec![MessengerConfig {
+                messenger_type: "slack".to_string(),
+                enabled: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let msg = sample_message("alice", Some("room-42"));
+
+        assert!(!is_allowed_message(&config, "telegram", &msg));
+    }
+
+    #[test]
+    fn is_allowed_message_allows_when_matching_messenger_and_allow_lists_empty() {
+        let config = Config {
+            messengers: vec![MessengerConfig {
+                messenger_type: "telegram".to_string(),
+                enabled: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let msg = sample_message("alice", Some("room-42"));
+
+        assert!(is_allowed_message(&config, "telegram", &msg));
     }
 
     #[tokio::test]
